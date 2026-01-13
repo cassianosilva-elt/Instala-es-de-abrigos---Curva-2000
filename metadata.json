@@ -1,0 +1,8 @@
+{
+  "name": "OOH Ops - Eletromidia Field Manager",
+  "description": "Enterprise-grade field operations monitoring system for Out-of-Home media assets, featuring real-time tracking, mandatory photographic evidence, and hierarchical management views.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}

@@ -1,0 +1,50 @@
+/* Base styles and responsive resets */
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Inter', sans-serif !important;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar for better mobile appearance */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #cbd5e1;
+}
+
+/* No scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+.no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+/* Animation utilities */
+.animate-headShake {
+    animation: headShake 0.5s ease-in-out;
+}
+
+@keyframes headShake {
+    0% { transform: translateX(0); }
+    6.5% { transform: translateX(-6px) rotateY(-9deg); }
+    18.5% { transform: translateX(5px) rotateY(7deg); }
+    31.5% { transform: translateX(-3px) rotateY(-5deg); }
+    43.5% { transform: translateX(2px) rotateY(3deg); }
+    50% { transform: translateX(0); }
+}
