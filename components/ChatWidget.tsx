@@ -77,7 +77,12 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
         setLoadingContacts(true);
         try {
             const users = await getAllUsers(currentUser.companyId);
-            setContacts(users.filter(u => u.id !== currentUser.id));
+            // Deduplicate by Name + Role (to handle multiple testing accounts)
+            const uniqueUsers = users.filter((u, index, self) =>
+                u.id !== currentUser.id &&
+                self.findIndex(t => t.name === u.name && t.role === u.role) === index
+            );
+            setContacts(uniqueUsers);
         } catch (error) {
             console.error("Erro ao carregar contatos", error);
         } finally {
@@ -199,7 +204,8 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
                                         </div>
                                         <div className="overflow-hidden">
                                             <p className="font-black text-slate-800 text-sm truncate">{contact.name}</p>
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{contact.companyName}</p>
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-tight">{contact.role.replace('PARCEIRO_', '')}</p>
+                                            <p className="text-[9px] text-slate-400 truncate mt-0.5">{contact.email}</p>
                                         </div>
                                     </button>
                                 ))
@@ -213,6 +219,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
                         // Chat Conversation
                         <>
                             <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                                {console.log(`[Chat UI] Renderizando conversa: ${conversationId}`)}
                                 {loadingMessages ? (
                                     <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-400">
                                         <Loader2 className="animate-spin" size={24} />

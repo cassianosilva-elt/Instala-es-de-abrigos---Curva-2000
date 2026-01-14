@@ -1,8 +1,10 @@
 
 import React, { useState, useMemo } from 'react';
 import { Task, TaskStatus, User, UserRole, AssetType, ServiceType } from '../types';
-import { ClipboardList, Search, Filter, AlertCircle, CheckCircle, Clock, MapPin, Plus } from 'lucide-react';
+import { ClipboardList, Search, Filter, AlertCircle, CheckCircle, Clock, MapPin, Plus, Box } from 'lucide-react';
 import SimpleModal from './SimpleModal';
+import SearchableSelect from './SearchableSelect';
+import { getAssets } from '../api/fieldManagerApi';
 
 interface Props {
     tasks: Task[];
@@ -16,6 +18,8 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
     const [filterStatus, setFilterStatus] = useState<string>('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [assets, setAssets] = useState<any[]>([]);
+    const [isAssetLoading, setIsAssetLoading] = useState(false);
 
     // Form State (Ported from ChiefView)
     const [assetType, setAssetType] = useState<AssetType>(AssetType.BUS_SHELTER);
@@ -25,6 +29,25 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
     const [scheduledDate, setScheduledDate] = useState('');
     const [description, setDescription] = useState('');
     const [address, setAddress] = useState('');
+
+    React.useEffect(() => {
+        if (isModalOpen) {
+            setIsAssetLoading(true);
+            getAssets().then(data => {
+                setAssets(data);
+                setIsAssetLoading(false);
+            });
+        }
+    }, [isModalOpen]);
+
+    const handleAssetChange = (code: string) => {
+        setAssetId(code);
+        const selected = assets.find(a => a.code === code);
+        if (selected) {
+            setAssetType(selected.type as AssetType);
+            setAddress(selected.address);
+        }
+    };
 
     const isInternalUser = currentUser.role === UserRole.CHEFE || currentUser.role === UserRole.LIDER;
 
@@ -201,11 +224,32 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
                         </div>
                         <div>
                             <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">ID do Ativo</label>
-                            <input
-                                type="text" required value={assetId} onChange={e => setAssetId(e.target.value)}
-                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 text-xs"
-                                placeholder="Ex: ABR-001"
+                            <SearchableSelect
+                                required
+                                value={assetId}
+                                onChange={handleAssetChange}
+                                isLoading={isAssetLoading}
+                                placeholder="Selecionar Ativo..."
+                                options={assets.map(a => ({
+                                    value: a.code,
+                                    label: a.code,
+                                    sublabel: a.city
+                                }))}
                             />
+                        </div>
+                    </div>
+
+                    <div className="bg-primary/5 p-4 rounded-xl border border-primary/10 mb-4">
+                        <p className="text-[10px] font-black text-primary uppercase tracking-widest mb-1">Detalhes Automáticos</p>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <p className="text-[9px] text-slate-400 uppercase font-bold">Tipo</p>
+                                <p className="text-xs font-black text-slate-700">{assetType || '---'}</p>
+                            </div>
+                            <div>
+                                <p className="text-[9px] text-slate-400 uppercase font-bold">Endereço</p>
+                                <p className="text-xs font-black text-slate-700 truncate">{address || '---'}</p>
+                            </div>
                         </div>
                     </div>
 

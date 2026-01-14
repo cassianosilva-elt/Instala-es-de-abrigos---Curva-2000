@@ -23,6 +23,19 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     const [resending, setResending] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [resendSuccess, setResendSuccess] = useState(false);
+    const [verifySuccess, setVerifySuccess] = useState(false);
+
+    // Recovery of email if page refreshes during verification
+    React.useEffect(() => {
+        const savedEmail = localStorage.getItem('pending_verification_email');
+        if (savedEmail) {
+            setEmail(savedEmail);
+            setMode('verify');
+            // Try to recover portal as well
+            const savedPortal = localStorage.getItem('active_portal');
+            if (savedPortal) setPortal(savedPortal as LoginPortal);
+        }
+    }, []);
 
     const isInternal = portal === 'internal';
 
@@ -60,11 +73,15 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 });
                 if (authError) throw authError;
 
+                console.log('Login successful, checking portal access...', data.user);
+
                 // SEGURANÇA: Verificar se o usuário pertence ao portal correto
                 if (data.session && data.user) {
-                    const userMeta = data.user.user_metadata;
-                    const userCompanyId = userMeta?.company_id || 'internal';
+                    const userMeta = data.user.user_metadata || {};
+                    const userCompanyId = userMeta.company_id || 'internal';
                     const isUserInternal = userCompanyId === 'internal';
+
+                    console.log('Auth Metadata:', { userCompanyId, isUserInternal, currentPortal: portal });
 
                     // Se o usuário é interno mas está tentando logar pelo portal parceiro
                     if (isUserInternal && !isInternal) {
@@ -110,6 +127,9 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 });
                 console.log('SignUp Success:', data);
                 if (data.user || data.session) {
+                    // Save email and portal for recovery
+                    localStorage.setItem('pending_verification_email', normalizedEmail);
+                    localStorage.setItem('active_portal', isInternal ? 'internal' : 'partner');
                     setMode('verify');
                     setError(null);
                 }
@@ -121,8 +141,26 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     type: 'signup'
                 });
                 console.log('Verify response:', data, verifyError);
-                if (verifyError) throw verifyError;
-                if (data.session) onLoginSuccess(data.session);
+                if (verifyError) {
+                    console.error('OTP Verification Error:', verifyError);
+                    throw verifyError;
+                }
+
+                if (data.session) {
+                    // Re-confirm portal on successful verification and CLEAR pending email
+                    localStorage.setItem('active_portal', isInternal ? 'internal' : 'partner');
+                    localStorage.removeItem('pending_verification_email');
+                    setVerifySuccess(true);
+                    onLoginSuccess(data.session);
+                } else if (data.user) {
+                    // If no session but user exists, it might be verified but needs login
+                    // or it's a specific Supabase config. Most cases data.session is present.
+                    console.log('User verified but no session yet');
+                    localStorage.removeItem('pending_verification_email');
+                    setVerifySuccess(true);
+                    setMode('login');
+                    setError('Conta verificada com sucesso! Por favor, faça o login.');
+                }
             }
         } catch (err: any) {
             setError(err.message || 'Erro ao processar solicitação');
@@ -250,7 +288,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
                     {/* Footer Branding */}
                     <div className="mt-24 text-center">
-                        <p className="text-[11px] font-black uppercase tracking-[0.5em] text-slate-400">© 2026 Eletromidia SA • Field Manager</p>
+                        <p className="text-[11px] font-black uppercase tracking-[0.5em] text-slate-400">© 2026 Eletromidia SA • Curva 2000</p>
                     </div>
                 </div>
             </div>
@@ -310,7 +348,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                                         maxLength={8}
                                         value={otp}
                                         onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
-                                        className={`w-full px-6 py-8 rounded-[24px] border border-dashed outline-none transition-all font-black text-4xl text-center tracking-[0.2em] ${isInternal
+                                        className={`w-full px-4 py-8 rounded-[24px] border border-dashed outline-none transition-all font-black text-2xl md:text-4xl text-center tracking-[0.1em] md:tracking-[0.2em] ${isInternal
                                             ? 'bg-primary-50 border-primary-200 text-primary focus:bg-white focus:border-primary ring-8 ring-transparent focus:ring-primary-50'
                                             : 'bg-slate-800/40 border-primary/20 text-white focus:bg-slate-800 focus:border-primary ring-8 ring-transparent focus:ring-primary/5'
                                             }`}
@@ -325,6 +363,12 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                             {resendSuccess && (
                                 <div className="p-4 rounded-[16px] bg-emerald-50 border border-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-[0.2em] text-center">
                                     ✓ Novo código enviado com sucesso!
+                                </div>
+                            )}
+
+                            {verifySuccess && (
+                                <div className="p-4 rounded-[16px] bg-emerald-50 border border-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-[0.2em] text-center animate-bounce">
+                                    ✓ Verificado! Entrando...
                                 </div>
                             )}
 

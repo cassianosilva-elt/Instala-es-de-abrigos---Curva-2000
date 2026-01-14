@@ -279,36 +279,86 @@ export const getAllUsers = async (companyId: string): Promise<User[]> => {
     }));
 };
 
-export const getOrCreateConversation = async (user1Id: string, user2Id: string): Promise<string> => {
-    // Check if conversation exists
-    const { data: existing, error } = await supabase
-        .from('chat_conversations')
-        .select('id')
-        .contains('participants', [user1Id, user2Id])
-        .filter('participants', 'cs', `{${user1Id},${user2Id}}`); // Exact участников match or at least contains both
-
-    // Filtering logic for array contains in postgres can be tricky with exact matches
-    // For simplicity, find any conversation where both are participants and participants length is 2
-    const { data: convs, error: scError } = await supabase
-        .from('chat_conversations')
+export const getAllTechnicians = async (): Promise<User[]> => {
+    const { data, error } = await supabase
+        .from('profiles')
         .select('*')
+        .in('role', [UserRole.TECNICO, UserRole.PARCEIRO_TECNICO]);
+
+    if (error) return [];
+    return data.map(u => ({
+        id: u.id,
+        name: u.name,
+        role: u.role as UserRole,
+        companyId: u.company_id,
+        companyName: u.company_name,
+        avatar: u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}`,
+        email: u.email
+    }));
+};
+
+export const getTechniciansByLeader = async (leaderId: string): Promise<User[]> => {
+    const { data: teams, error: teamsError } = await supabase
+        .from('teams')
+        .select('technician_ids')
+        .eq('leader_id', leaderId);
+
+    if (teamsError || !teams) return [];
+
+    const techIds = Array.from(new Set(teams.flatMap(t => (t.technician_ids || []))));
+    if (techIds.length === 0) return [];
+
+    const { data: users, error: usersError } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('id', techIds);
+
+    if (usersError || !users) return [];
+
+    return users.map(u => ({
+        id: u.id,
+        name: u.name,
+        role: u.role as UserRole,
+        companyId: u.company_id,
+        companyName: u.company_name,
+        avatar: u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}`,
+        email: u.email
+    }));
+};
+
+export const getOrCreateConversation = async (user1Id: string, user2Id: string): Promise<string> => {
+    console.log(`[Chat] Configurando conversa entre ${user1Id} e ${user2Id}`);
+
+    // Buscamos conversas que contenham os dois participantes
+    const { data: convs, error } = await supabase
+        .from('chat_conversations')
+        .select('id, participants')
         .contains('participants', [user1Id, user2Id]);
 
-    if (convs && convs.length > 0) {
+    if (!error && convs && convs.length > 0) {
+        // Garantimos que pegamos a conversa com EXATAMENTE 2 participantes (conversa privada)
         const exactConv = convs.find(c => c.participants.length === 2);
-        if (exactConv) return exactConv.id;
+        if (exactConv) {
+            console.log(`[Chat] Conversa encontrada: ${exactConv.id}`);
+            return exactConv.id;
+        }
     }
 
-    // Create new
+    // Se não existir, criamos uma nova com os IDs ordenados para consistência absoluta
+    const sortedParticipants = [user1Id, user2Id].sort();
+    console.log(`[Chat] Criando nova conversa com participantes:`, sortedParticipants);
+
     const { data, error: createError } = await supabase
         .from('chat_conversations')
-        .insert({
-            participants: [user1Id, user2Id]
-        })
+        .insert({ participants: sortedParticipants })
         .select()
         .single();
 
-    if (createError) throw createError;
+    if (createError) {
+        console.error(`[Chat] Erro ao criar conversa:`, createError);
+        throw createError;
+    }
+
     return data.id;
 };
 

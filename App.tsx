@@ -11,6 +11,7 @@ import { TeamStatusView } from './components/TeamStatusView';
 import { ChatWidget } from './components/ChatWidget';
 import Login from './components/Login';
 import { ProfileSettings } from './components/ProfileSettings';
+import { NotificationCenter } from './components/NotificationCenter';
 import { supabase } from './api/supabaseClient';
 import { ThemeProvider, companyThemes } from './contexts/ThemeContext';
 import { LogOut, LayoutGrid, Users, Map as MapIcon, ClipboardList, ShieldCheck, Building2, Activity, Loader2, X, Settings } from 'lucide-react';
@@ -37,9 +38,11 @@ const App: React.FC = () => {
         const isUserInternal = userCompanyId === 'internal';
         const savedPortal = localStorage.getItem('active_portal');
 
-        if (!savedPortal ||
+        if (savedPortal && (
           (savedPortal === 'internal' && !isUserInternal) ||
-          (savedPortal === 'partner' && isUserInternal)) {
+          (savedPortal === 'partner' && isUserInternal)
+        )) {
+          console.warn('Portal mismatch detected:', { savedPortal, isUserInternal });
           await supabase.auth.signOut();
           localStorage.removeItem('active_portal');
           setLoading(false);
@@ -67,6 +70,7 @@ const App: React.FC = () => {
   }, []);
 
   const fetchProfile = async (userId: string) => {
+    setLoading(true);
     try {
       const { data: profile, error } = await supabase
         .from('profiles')
@@ -75,6 +79,7 @@ const App: React.FC = () => {
         .single();
 
       if (profile && !error) {
+        console.log('Profile loaded successfully:', profile);
         setCurrentUser({
           id: profile.id,
           name: profile.name,
@@ -84,6 +89,18 @@ const App: React.FC = () => {
           companyName: profile.company_name,
           avatar: profile.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile.name)}`,
         });
+      } else {
+        console.error('Profile not found or error fetching:', { userId, error });
+        // If profile is missing (PGRST116), sign out to allow fresh login/signup
+        if (error && error.code === 'PGRST116') {
+          console.warn('Profile missing. Signing out...');
+          await supabase.auth.signOut();
+          setCurrentUser(null);
+        } else {
+          // General fetch error (like "Failed to fetch")
+          // Just set loading to false to show login screen or error state
+          setCurrentUser(null);
+        }
       }
     } catch (err) {
       console.error('Error fetching profile:', err);
@@ -270,7 +287,7 @@ const App: React.FC = () => {
   }
 
   if (!currentUser) {
-    return <Login onLoginSuccess={() => { }} />;
+    return <Login onLoginSuccess={(session) => fetchProfile(session.user.id)} />;
   }
 
   const renderContent = () => {
@@ -388,9 +405,12 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
-            <button className="md:hidden p-3 text-primary bg-primary-50 rounded-2xl" onClick={logout}>
-              <LogOut size={24} />
-            </button>
+            <div className="flex items-center gap-4">
+              <NotificationCenter currentUser={currentUser} />
+              <button className="md:hidden p-3 text-primary bg-primary-50 rounded-2xl" onClick={logout}>
+                <LogOut size={24} />
+              </button>
+            </div>
           </header>
 
           <div className="flex-1 overflow-y-auto p-4 md:p-10">
