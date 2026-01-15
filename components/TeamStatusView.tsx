@@ -28,8 +28,10 @@ export const TeamStatusView: React.FC<TeamStatusViewProps> = ({ currentUser }) =
         try {
             let users: User[] = [];
 
-            if (currentUser.role === UserRole.CHEFE || currentUser.role === UserRole.PARCEIRO_CHEFE) {
+            if (currentUser.role === UserRole.CHEFE) {
                 users = await getAllTechnicians();
+            } else if (currentUser.role === UserRole.PARCEIRO_CHEFE) {
+                users = await getAllTechnicians(currentUser.companyId);
             } else if (currentUser.role === UserRole.LIDER || currentUser.role === UserRole.PARCEIRO_LIDER) {
                 users = await getTechniciansByLeader(currentUser.id);
             }
@@ -108,8 +110,8 @@ export const TeamStatusView: React.FC<TeamStatusViewProps> = ({ currentUser }) =
                                         <div className="flex justify-between items-start mb-1">
                                             <span className="font-medium text-gray-700 truncate w-3/4">{task.asset.code} - {task.serviceType}</span>
                                             <span className={`text-xs px-2 py-0.5 rounded-full ${task.status === TaskStatus.COMPLETED ? 'bg-green-100 text-green-700' :
-                                                    task.status === TaskStatus.IN_PROGRESS ? 'bg-blue-100 text-blue-700' :
-                                                        'bg-gray-100 text-gray-600'
+                                                task.status === TaskStatus.IN_PROGRESS ? 'bg-blue-100 text-blue-700' :
+                                                    'bg-gray-100 text-gray-600'
                                                 }`}>
                                                 {task.status === TaskStatus.COMPLETED ? 'OK' : '...'}
                                             </span>

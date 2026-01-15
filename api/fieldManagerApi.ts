@@ -1,5 +1,5 @@
 
-import { Task, TaskStatus, EvidenceStage, UserRole, TaskEvidence, ChatMessage, User, Team, ServiceType } from '../types';
+import { Task, TaskStatus, EvidenceStage, UserRole, TaskEvidence, ChatMessage, User, Team, ServiceType, Asset, AssetType, Employee, Absence, VehicleLog, Vehicle, OpecItem, OpecDevice, AuditLog } from '../types';
 import { supabase } from './supabaseClient';
 
 // --- TASKS ---
@@ -197,6 +197,34 @@ export const uploadEvidence = async (taskId: string, stage: EvidenceStage, file:
     };
 };
 
+export const getEvidenceByAssetId = async (assetId: string): Promise<TaskEvidence[]> => {
+    const { data: tasks, error: tasksError } = await supabase
+        .from('tasks')
+        .select('id')
+        .eq('asset_id', assetId);
+
+    if (tasksError || !tasks || tasks.length === 0) return [];
+
+    const taskIds = tasks.map(t => t.id);
+
+    const { data, error } = await supabase
+        .from('task_evidences')
+        .select('*')
+        .in('task_id', taskIds);
+
+    if (error) return [];
+    return data.map(ev => ({
+        id: ev.id,
+        taskId: ev.task_id,
+        stage: ev.stage as EvidenceStage,
+        photoUrl: ev.photo_url,
+        capturedAt: new Date(ev.captured_at),
+        gpsLat: ev.gps_lat,
+        gpsLng: ev.gps_lng,
+        gpsAccuracy: ev.gps_accuracy
+    }));
+};
+
 // --- TEAM MANAGEMENT ---
 
 export const getTeams = async (companyId: string): Promise<Team[]> => {
@@ -262,28 +290,76 @@ export const deleteTeam = async (teamId: string): Promise<void> => {
 };
 
 export const getAllUsers = async (companyId: string): Promise<User[]> => {
-    let query = supabase.from('profiles').select('*');
+    // 1. Fetch active profiles
+    let profileQuery = supabase.from('profiles').select('*');
     if (companyId !== 'internal') {
-        query = query.eq('company_id', companyId);
+        profileQuery = profileQuery.eq('company_id', companyId);
     }
-    const { data, error } = await query;
-    if (error) return [];
-    return data.map(u => ({
+    const { data: profiles, error: pError } = await profileQuery;
+    if (pError) return [];
+
+    // 2. Fetch pending invites
+    let inviteQuery = supabase.from('employee_invites').select('*');
+    if (companyId !== 'internal') {
+        inviteQuery = inviteQuery.eq('company_id', companyId);
+    }
+    const { data: invites, error: iError } = await inviteQuery;
+    if (iError) return [];
+
+    // 3. Convert to User type
+    const activeUsers: User[] = (profiles || []).map(u => ({
         id: u.id,
         name: u.name,
         role: u.role as UserRole,
         companyId: u.company_id,
         companyName: u.company_name,
         avatar: u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}`,
-        email: u.email
+        email: u.email,
+        status: 'ACTIVE',
+        shift: u.shift,
+        code: u.code,
+        leaderName: u.leader_name,
+        originalStatus: u.original_status
     }));
+
+    const pendingUsers: User[] = (invites || []).map(i => ({
+        id: i.id, // This is the Invite ID (UUID)
+        name: i.name,
+        role: i.role as UserRole,
+        companyId: i.company_id,
+        companyName: i.company_name,
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(i.name)}&background=random`,
+        email: i.email,
+        status: 'PENDING',
+        shift: i.shift,
+        code: i.code,
+        leaderName: i.leader_name,
+        originalStatus: i.original_status
+    }));
+
+    // 4. Merge and Deduplicate by Email (prefer ACTIVE)
+    const userMap = new Map<string, User>();
+    activeUsers.forEach(u => userMap.set(u.email.toLowerCase(), u));
+    pendingUsers.forEach(u => {
+        if (!userMap.has(u.email.toLowerCase())) {
+            userMap.set(u.email.toLowerCase(), u);
+        }
+    });
+
+    return Array.from(userMap.values());
 };
 
-export const getAllTechnicians = async (): Promise<User[]> => {
-    const { data, error } = await supabase
+export const getAllTechnicians = async (companyId?: string): Promise<User[]> => {
+    let query = supabase
         .from('profiles')
         .select('*')
         .in('role', [UserRole.TECNICO, UserRole.PARCEIRO_TECNICO]);
+
+    if (companyId && companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+
+    const { data, error } = await query;
 
     if (error) return [];
     return data.map(u => ({
@@ -409,10 +485,30 @@ export const getMessagesByConversation = async (conversationId: string): Promise
 
 // --- ASSETS ---
 
-export const getAssets = async (): Promise<any[]> => {
-    const { data, error } = await supabase.from('assets').select('*');
+export const getAssets = async (companyId?: string): Promise<Asset[]> => {
+    let query = supabase.from('assets').select('*');
+    if (companyId && companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+    const { data, error } = await query;
     if (error) return [];
-    return data;
+
+    return data.map(a => ({
+        id: a.id,
+        code: a.code,
+        type: a.type as AssetType,
+        city: a.city,
+        location: {
+            lat: a.lat,
+            lng: a.lng,
+            address: a.address
+        }
+    }));
+};
+
+export const bulkCreateAssets = async (assets: any[]): Promise<void> => {
+    const { error } = await supabase.from('assets').upsert(assets, { onConflict: 'code' });
+    if (error) throw error;
 };
 
 // --- PROFILE ---
@@ -443,7 +539,7 @@ export const updateUserProfile = async (userId: string, updates: Partial<User>):
 export const uploadAvatar = async (userId: string, file: File): Promise<string> => {
     const fileExt = file.name.split('.').pop();
     const fileName = `${userId}/${Date.now()}.${fileExt}`;
-    const filePath = `avatars/${fileName}`;
+    const filePath = `${fileName}`;
 
     const { error: uploadError } = await supabase.storage
         .from('avatars')
@@ -456,4 +552,473 @@ export const uploadAvatar = async (userId: string, file: File): Promise<string> 
         .getPublicUrl(filePath);
 
     return data.publicUrl;
+};
+
+// --- MEASUREMENT PRICES ---
+
+export const getMeasurementPrices = async (companyId: string): Promise<any[]> => {
+    const { data, error } = await supabase
+        .from('measurement_prices')
+        .select('*')
+        .eq('company_id', companyId);
+
+    if (error) return [];
+    return data.map(p => ({
+        id: p.id,
+        category: p.category,
+        description: p.description,
+        unit: p.unit,
+        price: p.price
+    }));
+};
+
+export const bulkUpdateMeasurementPrices = async (companyId: string, prices: any[], category?: string): Promise<void> => {
+    // 1. Clear existing prices for this scope to avoid ghost items (like old headers)
+    let deleteQuery = supabase.from('measurement_prices').delete().eq('company_id', companyId);
+
+    if (category && category !== 'all') {
+        const catMap: Record<string, string> = { 'abrigo': 'ABRIGO', 'totem': 'TOTEM', 'digital': 'DIGITAL' };
+        deleteQuery = deleteQuery.eq('category', catMap[category] || category);
+    }
+
+    const { error: deleteError } = await deleteQuery;
+    if (deleteError) throw deleteError;
+
+    // 2. Map and insert new ones
+    const dbPrices = prices.map(p => ({
+        id: p.id,
+        company_id: companyId,
+        category: p.category,
+        description: p.description,
+        unit: p.unit,
+        price: p.price,
+        updated_at: new Date().toISOString()
+    }));
+
+    if (dbPrices.length === 0) return;
+
+    const { error: upsertError } = await supabase
+        .from('measurement_prices')
+        .upsert(dbPrices, { onConflict: 'id,company_id' });
+
+    if (upsertError) throw upsertError;
+};
+
+
+// --- EMPLOYEES & INVITES ---
+
+export const getEmployees = async (companyId: string): Promise<Employee[]> => {
+    // 1. Fetch active profiles
+    const { data: profiles, error: pError } = await getAllUsers(companyId) as any;
+    const activeEmployees: Employee[] = (profiles || []).map((p: User) => ({ ...p, status: 'ACTIVE' }));
+
+    // 2. Fetch pending invites
+    let query = supabase.from('employee_invites').select('*');
+    if (companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+    const { data: invites, error: iError } = await query;
+
+    const pendingEmployees: Employee[] = (invites || []).map(i => ({
+        id: i.id,
+        name: i.name,
+        role: i.role as UserRole,
+        companyId: i.company_id,
+        companyName: i.company_name,
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(i.name)}&background=random`,
+        email: i.email,
+        status: 'PENDING',
+        shift: i.shift,
+        code: i.code,
+        leaderName: i.leader_name,
+        originalStatus: i.original_status
+    }));
+
+    // 3. Merge
+    return [...activeEmployees, ...pendingEmployees];
+};
+
+export const bulkCreateEmployees = async (employees: Omit<Employee, 'id' | 'status' | 'avatar'>[]): Promise<void> => {
+    // We insert into employee_invites
+    const dbInvites = employees.map(e => ({
+        name: e.name,
+        email: e.email,
+        role: e.role,
+        company_id: e.companyId,
+        company_name: e.companyName,
+        shift: e.shift,
+        code: e.code,
+        leader_name: e.leaderName,
+        original_status: e.originalStatus
+    }));
+
+    const { error } = await supabase.from('employee_invites').insert(dbInvites);
+
+    if (error) throw error;
+};
+
+export const createAbsence = async (absence: Omit<Absence, 'id'>): Promise<void> => {
+    const { error } = await supabase.from('employee_absences').insert({
+        employee_id: absence.employeeId,
+        employee_name: absence.employeeName,
+        date: absence.date,
+        reason: absence.reason,
+        description: absence.description,
+        company_id: absence.companyId,
+        evidence_url: absence.evidenceUrl
+    });
+    if (error) throw error;
+};
+
+export const getAbsences = async (companyId: string): Promise<Absence[]> => {
+    let query = supabase.from('employee_absences').select('*');
+    if (companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return data.map((item: any) => ({
+        id: item.id,
+        employeeId: item.employee_id,
+        employeeName: item.employee_name,
+        date: item.date,
+        reason: item.reason,
+        description: item.description,
+        companyId: item.company_id,
+        evidenceUrl: item.evidence_url
+    }));
+};
+
+export const uploadAbsenceEvidence = async (file: File): Promise<string> => {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Math.random()}.${fileExt}`;
+    const filePath = `${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+        .from('absences')
+        .upload(filePath, file, { upsert: true });
+
+    if (uploadError) throw uploadError;
+
+    const { data } = supabase.storage
+        .from('absences')
+        .getPublicUrl(filePath);
+
+    return data.publicUrl;
+};
+
+
+export const deleteEmployeeInvite = async (inviteId: string): Promise<void> => {
+    const { error } = await supabase.from('employee_invites').delete().eq('id', inviteId);
+    if (error) throw error;
+};
+
+export const bulkDeleteInvites = async (inviteIds: string[]): Promise<void> => {
+    const { error } = await supabase.from('employee_invites').delete().in('id', inviteIds);
+    if (error) throw error;
+};
+
+export const getVehicleLogs = async (companyId: string): Promise<VehicleLog[]> => {
+    let query = supabase.from('vehicle_control').select('*');
+    if (companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+    const { data, error } = await query.order('occurrence_time', { ascending: false });
+    if (error) return [];
+    return data.map(v => ({
+        id: v.id,
+        userId: v.user_id,
+        userName: v.user_name,
+        shift: v.shift,
+        occurrenceTime: new Date(v.occurrence_time),
+        plate: v.plate,
+        model: v.model,
+        companyId: v.company_id,
+        vehicleId: v.vehicle_id,
+        startKm: v.start_km,
+        endKm: v.end_km,
+        isActive: v.is_active,
+        checkinTime: v.checkin_time ? new Date(v.checkin_time) : undefined,
+        additionalCollaborators: v.additional_collaborators || [],
+        createdAt: new Date(v.created_at)
+    }));
+};
+
+export const createVehicleLog = async (log: Omit<VehicleLog, 'id'>): Promise<void> => {
+    const { error } = await supabase.from('vehicle_control').insert({
+        user_id: log.userId,
+        user_name: log.userName,
+        shift: log.shift,
+        occurrence_time: log.occurrenceTime.toISOString(),
+        plate: log.plate,
+        model: log.model,
+        company_id: log.companyId,
+        vehicle_id: log.vehicleId,
+        start_km: log.startKm,
+        additional_collaborators: log.additionalCollaborators || [],
+        is_active: true
+    });
+
+    if (error) throw error;
+
+    // Update vehicle status to 'Em Uso'
+    if (log.vehicleId) {
+        await supabase.from('vehicles').update({ status: 'Em Uso' }).eq('id', log.vehicleId);
+    }
+};
+
+export const closeVehicleLog = async (logId: string, vehicleId: string, endKm: number): Promise<void> => {
+    const checkinTime = new Date().toISOString();
+
+    // 1. Update the log
+    const { error: logError } = await supabase
+        .from('vehicle_control')
+        .update({
+            end_km: endKm,
+            checkin_time: checkinTime,
+            is_active: false
+        })
+        .eq('id', logId);
+
+    if (logError) throw logError;
+
+    // 2. Update the vehicle
+    const { error: vehicleError } = await supabase
+        .from('vehicles')
+        .update({
+            current_km: endKm,
+            status: 'Disponível'
+        })
+        .eq('id', vehicleId);
+
+    if (vehicleError) throw vehicleError;
+};
+
+// --- VEHICLES (FLEET) ---
+
+export const getVehicles = async (companyId: string): Promise<Vehicle[]> => {
+    let query = supabase.from('vehicles').select('*');
+    if (companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+    const { data, error } = await query.order('model', { ascending: true });
+    if (error) return [];
+    return data.map(v => ({
+        id: v.id,
+        model: v.model,
+        plate: v.plate,
+        companyId: v.company_id,
+        currentKm: v.current_km,
+        lastMaintenanceKm: v.last_maintenance_km,
+        status: v.status as any,
+        maintenanceNotes: v.maintenance_notes,
+        createdAt: new Date(v.created_at)
+    }));
+};
+
+export const createVehicle = async (vehicle: Omit<Vehicle, 'id' | 'createdAt'>): Promise<void> => {
+    const { error } = await supabase.from('vehicles').insert({
+        model: vehicle.model,
+        plate: vehicle.plate.toUpperCase(),
+        company_id: vehicle.companyId,
+        current_km: vehicle.currentKm,
+        last_maintenance_km: vehicle.lastMaintenanceKm,
+        status: vehicle.status,
+        maintenance_notes: vehicle.maintenanceNotes
+    });
+    if (error) throw error;
+};
+
+export const updateVehicle = async (id: string, updates: Partial<Vehicle>): Promise<void> => {
+    const dbUpdates: any = {};
+    if (updates.model) dbUpdates.model = updates.model;
+    if (updates.plate) dbUpdates.plate = updates.plate.toUpperCase();
+    if (updates.currentKm !== undefined) dbUpdates.current_km = updates.currentKm;
+    if (updates.lastMaintenanceKm !== undefined) dbUpdates.last_maintenance_km = updates.lastMaintenanceKm;
+    if (updates.status) dbUpdates.status = updates.status;
+    if (updates.maintenanceNotes !== undefined) dbUpdates.maintenance_notes = updates.maintenanceNotes;
+
+    const { error } = await supabase.from('vehicles').update(dbUpdates).eq('id', id);
+    if (error) throw error;
+};
+
+export const deleteVehicle = async (id: string): Promise<void> => {
+    const { error } = await supabase.from('vehicles').delete().eq('id', id);
+    if (error) throw error;
+};
+
+
+
+// --- OPEC MANAGEMENT ---
+
+export const getOpecItems = async (companyId: string): Promise<OpecItem[]> => {
+    let query = supabase.from('opec_management').select('*');
+    if (companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+    const { data, error } = await query.order('assignment_date', { ascending: false });
+    if (error) return [];
+
+    return data.map(item => ({
+        id: item.id,
+        opecName: item.opec_name,
+        employeeId: item.employee_id,
+        assignmentDate: item.assignment_date,
+        companyId: item.company_id,
+        createdAt: item.created_at
+    }));
+};
+
+export const createOpecItem = async (item: Omit<OpecItem, 'id' | 'createdAt'>): Promise<void> => {
+    const { error } = await supabase.from('opec_management').insert({
+        opec_name: item.opecName,
+        employee_id: item.employeeId,
+        assignment_date: item.assignmentDate,
+        company_id: item.companyId
+    });
+    if (error) throw error;
+};
+
+export const updateOpecItem = async (id: string, updates: Partial<OpecItem>): Promise<void> => {
+    const dbUpdates: any = {};
+    if (updates.opecName) dbUpdates.opec_name = updates.opecName;
+    if (updates.employeeId) dbUpdates.employee_id = updates.employeeId;
+    if (updates.assignmentDate) dbUpdates.assignment_date = updates.assignmentDate;
+
+    const { error } = await supabase.from('opec_management').update(dbUpdates).eq('id', id);
+    if (error) throw error;
+};
+
+export const deleteOpecItem = async (id: string): Promise<void> => {
+    const { error } = await supabase.from('opec_management').delete().eq('id', id);
+    if (error) throw error;
+};
+
+// --- OPEC DEVICES (INVENTORY) ---
+
+export const getOpecDevices = async (companyId: string): Promise<OpecDevice[]> => {
+    let query = supabase.from('opec_devices').select('*');
+    if (companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+    const { data, error } = await query.order('asset_code', { ascending: true });
+    if (error) return [];
+
+    return data.map(d => ({
+        id: d.id,
+        assetCode: d.asset_code,
+        phoneNumber: d.phone_number,
+        brand: d.brand,
+        model: d.model,
+        serialNumber: d.serial_number,
+        capacity: d.capacity,
+        imei1: d.imei_1,
+        imei2: d.imei_2,
+        observations: d.observations,
+        companyId: d.company_id,
+        createdAt: d.created_at
+    }));
+};
+
+export const createOpecDevice = async (device: Omit<OpecDevice, 'id' | 'createdAt'>): Promise<void> => {
+    const { error } = await supabase.from('opec_devices').insert({
+        asset_code: device.assetCode,
+        phone_number: device.phoneNumber,
+        brand: device.brand,
+        model: device.model,
+        serial_number: device.serialNumber,
+        capacity: device.capacity,
+        imei_1: device.imei1,
+        imei_2: device.imei2,
+        observations: device.observations,
+        company_id: device.companyId
+    });
+    if (error) throw error;
+};
+
+export const updateOpecDevice = async (id: string, updates: Partial<OpecDevice>): Promise<void> => {
+    const dbUpdates: any = {};
+    if (updates.assetCode !== undefined) dbUpdates.asset_code = updates.assetCode;
+    if (updates.phoneNumber !== undefined) dbUpdates.phone_number = updates.phoneNumber;
+    if (updates.brand !== undefined) dbUpdates.brand = updates.brand;
+    if (updates.model !== undefined) dbUpdates.model = updates.model;
+    if (updates.serialNumber !== undefined) dbUpdates.serial_number = updates.serialNumber;
+    if (updates.capacity !== undefined) dbUpdates.capacity = updates.capacity;
+    if (updates.imei1 !== undefined) dbUpdates.imei_1 = updates.imei1;
+    if (updates.imei2 !== undefined) dbUpdates.imei_2 = updates.imei2;
+    if (updates.observations !== undefined) dbUpdates.observations = updates.observations;
+
+    const { error } = await supabase.from('opec_devices').update(dbUpdates).eq('id', id);
+    if (error) throw error;
+};
+
+export const deleteOpecDevice = async (id: string): Promise<void> => {
+    const { error } = await supabase.from('opec_devices').delete().eq('id', id);
+    if (error) throw error;
+};
+
+export const bulkCreateOpecDevices = async (devices: Omit<OpecDevice, 'id' | 'createdAt'>[]): Promise<void> => {
+    const { error } = await supabase.from('opec_devices').upsert(
+        devices.map(device => ({
+            asset_code: device.assetCode,
+            phone_number: device.phoneNumber,
+            brand: device.brand,
+            model: device.model,
+            serial_number: device.serialNumber,
+            capacity: device.capacity,
+            imei_1: device.imei1,
+            imei_2: device.imei2,
+            observations: device.observations,
+            company_id: device.companyId
+        })),
+        { onConflict: 'asset_code' }
+    );
+    if (error) throw error;
+};
+// --- AUDIT LOGS ---
+
+export const getAuditLogs = async (tableName: string, recordId: string): Promise<AuditLog[]> => {
+    const { data: logs, error } = await supabase
+        .from('audit_logs')
+        .select('*')
+        .eq('table_name', tableName)
+        .eq('record_id', recordId)
+        .order('created_at', { ascending: false });
+
+    if (error || !logs) return [];
+
+    // Hydrate user names
+    const userIds = Array.from(new Set(logs.map(l => l.user_id).filter(Boolean)));
+    if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+            .from('profiles')
+            .select('id, name')
+            .in('id', userIds);
+
+        const profileMap = new Map(profiles?.map(p => [p.id, p.name]));
+        return logs.map(l => ({
+            id: l.id,
+            tableName: l.table_name,
+            recordId: l.record_id,
+            action: l.action,
+            oldData: l.old_data,
+            newData: l.new_data,
+            userId: l.user_id,
+            createdAt: new Date(l.created_at),
+            userName: profileMap.get(l.user_id) || 'Sistema/Desconhecido'
+        }));
+    }
+
+    return logs.map(l => ({
+        id: l.id,
+        tableName: l.table_name,
+        recordId: l.record_id,
+        action: l.action,
+        oldData: l.old_data,
+        newData: l.new_data,
+        userId: l.user_id,
+        createdAt: new Date(l.created_at),
+        userName: 'Sistema/Desconhecido'
+    }));
 };

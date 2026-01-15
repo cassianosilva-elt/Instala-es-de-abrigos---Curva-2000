@@ -2,10 +2,12 @@
 import React, { useMemo, useState } from 'react';
 import { User, Task, TaskStatus, Team, UserRole, AssetType, ServiceType } from '../types';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { MapPin, TrendingUp, Shield, Activity, Download, Building2, Plus, Clock, Box } from 'lucide-react';
+import { MapPin, TrendingUp, Shield, Activity, Download, Building2, Plus, Clock, Box, FileSpreadsheet } from 'lucide-react';
 import SimpleModal from './SimpleModal';
 import SearchableSelect from './SearchableSelect';
 import { getAssets } from '../api/fieldManagerApi';
+import AssetImportModal from './AssetImportModal';
+import EvidenceAuditModal from './EvidenceAuditModal';
 
 interface Props {
   chief: User;
@@ -21,6 +23,8 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [assets, setAssets] = useState<any[]>([]);
   const [isAssetLoading, setIsAssetLoading] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
 
   // Form State
   const [assetType, setAssetType] = useState<AssetType>(AssetType.BUS_SHELTER);
@@ -112,8 +116,14 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
     { id: 'gf1', name: 'GF1', logo: null, initials: 'GF1', color: '#16A34A' },
   ];
 
+  const isInternalChief = chief.role === UserRole.CHEFE;
+
   const vendorMetrics = useMemo(() => {
-    return allPartnerCompanies.map(company => {
+    const displayedCompanies = isInternalChief
+      ? allPartnerCompanies
+      : allPartnerCompanies.filter(company => company.id === chief.companyId);
+
+    return displayedCompanies.map(company => {
       const companyTasks = tasks.filter(t => t.companyId === company.id);
       const completed = companyTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
       return {
@@ -126,9 +136,8 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
         total: companyTasks.length
       };
     });
-  }, [tasks]);
+  }, [tasks, isInternalChief, chief.companyId]);
 
-  const isInternalChief = chief.role === UserRole.CHEFE;
   const availableTechnicians = useMemo(() => {
     if (isInternalChief) {
       // Chefe interno vê todos os técnicos (interno + parceiros)
@@ -201,6 +210,16 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
             >
               <Plus size={18} />
               <span className="text-xs md:text-sm">Nova OS</span>
+            </button>
+          )}
+
+          {isInternalChief && (
+            <button
+              onClick={() => setIsImportModalOpen(true)}
+              className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 md:px-6 py-2.5 md:py-3 bg-emerald-500 text-white font-black rounded-xl md:rounded-2xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 active:scale-95"
+            >
+              <FileSpreadsheet size={18} />
+              <span className="text-xs md:text-sm">Importar Planilha</span>
             </button>
           )}
 
@@ -282,7 +301,10 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
               </div>
             ))}
           </div>
-          <button className="mt-6 md:mt-8 py-3 md:py-4 w-full bg-slate-50 text-slate-600 text-xs md:text-sm font-black rounded-xl md:rounded-2xl hover:bg-primary hover:text-white transition-all shadow-sm uppercase tracking-widest">
+          <button
+            onClick={() => setIsAuditModalOpen(true)}
+            className="mt-6 md:mt-8 py-3 md:py-4 w-full bg-slate-50 text-slate-600 text-xs md:text-sm font-black rounded-xl md:rounded-2xl hover:bg-primary hover:text-white transition-all shadow-sm uppercase tracking-widest"
+          >
             Auditar Evidências
           </button>
         </div>
@@ -387,6 +409,23 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
           </button>
         </form>
       </SimpleModal>
+
+      <AssetImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={() => {
+          // Refresh assets
+          getAssets().then(setAssets);
+        }}
+        companies={allPartnerCompanies}
+      />
+
+      <EvidenceAuditModal
+        isOpen={isAuditModalOpen}
+        onClose={() => setIsAuditModalOpen(false)}
+        tasks={tasks}
+        users={users}
+      />
     </div>
   );
 };

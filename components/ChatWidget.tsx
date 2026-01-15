@@ -80,6 +80,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({ currentUser }) => {
             // Deduplicate by Name + Role (to handle multiple testing accounts)
             const uniqueUsers = users.filter((u, index, self) =>
                 u.id !== currentUser.id &&
+                u.status === 'ACTIVE' && // Only active users can chat
                 self.findIndex(t => t.name === u.name && t.role === u.role) === index
             );
             setContacts(uniqueUsers);

@@ -12,12 +12,18 @@ import { ChatWidget } from './components/ChatWidget';
 import Login from './components/Login';
 import { ProfileSettings } from './components/ProfileSettings';
 import { NotificationCenter } from './components/NotificationCenter';
+import { MeasurementView } from './components/MeasurementView';
+import { EmployeesView } from './components/EmployeesView';
+import { VehicleControlView } from './components/VehicleControlView';
+import OpecManagementView from './components/OpecManagementView';
+import { ReportsView } from './components/ReportsView';
 import { supabase } from './api/supabaseClient';
 import { ThemeProvider, companyThemes } from './contexts/ThemeContext';
-import { LogOut, LayoutGrid, Users, Map as MapIcon, ClipboardList, ShieldCheck, Building2, Activity, Loader2, X, Settings } from 'lucide-react';
+import { LogOut, LayoutGrid, Users, Map as MapIcon, ClipboardList, ShieldCheck, Building2, Activity, Loader2, X, Settings, Calculator, Menu, ChevronLeft, ChevronRight, Car, Smartphone, FileSpreadsheet } from 'lucide-react';
 import { getTasksByUserId, getTeams, getAllUsers, createTeam, updateTeam, deleteTeam } from './api/fieldManagerApi';
+import { useOfflineSync } from './hooks/useOfflineSync';
 
-type Tab = 'dashboard' | 'equipes' | 'mapa' | 'os' | 'monitoramento';
+type Tab = 'dashboard' | 'equipes' | 'mapa' | 'os' | 'monitoramento' | 'medicao' | 'funcionarios' | 'veiculos' | 'opec' | 'reports';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -27,7 +33,14 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [loading, setLoading] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
+  // Background sync for offline evidence
+  useOfflineSync(() => {
+    // Optionally reload tasks if in a view that needs it
+    // loadTasks(); 
+  });
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -308,6 +321,16 @@ const App: React.FC = () => {
         return isTechnician ? null : <MapaView tasks={visibleTasks} />;
       case 'os':
         return <OSView tasks={visibleTasks} users={visibleUsers} currentUser={currentUser} onUpdateTask={handleUpdateTask} onCreateTask={handleCreateTask} />;
+      case 'medicao':
+        return <MeasurementView currentUser={currentUser} />;
+      case 'funcionarios':
+        return <EmployeesView currentUser={currentUser} />;
+      case 'veiculos':
+        return isPartner ? null : <VehicleControlView currentUser={currentUser} />;
+      case 'opec':
+        return isPartner ? null : <OpecManagementView currentUser={currentUser} />;
+      case 'reports':
+        return <ReportsView tasks={visibleTasks} users={visibleUsers} currentUser={currentUser} />;
       case 'dashboard':
       default:
         const role = currentUser.role;
@@ -327,75 +350,107 @@ const App: React.FC = () => {
     <ThemeProvider companyId={currentUser.companyId || 'internal'}>
       <div className="min-h-screen bg-white flex flex-col md:flex-row font-sans">
         {/* Sidebar */}
-        <aside className={`hidden md:flex w-80 flex-col bg-white border-r border-slate-100 text-slate-900 shrink-0 ${isPartner ? 'ring-4 ring-primary-500/10' : ''}`}>
-          <div className="p-10 flex flex-col gap-6">
+        <aside className={`hidden md:flex flex-col bg-white border-r border-slate-100 text-slate-900 shrink-0 transition-all duration-300 ${isSidebarCollapsed ? 'w-20' : 'w-80'} ${isPartner ? 'ring-4 ring-primary-500/10' : ''}`}>
+          <div className={`p-6 flex flex-col gap-6 relative ${isSidebarCollapsed ? 'items-center' : ''}`}>
+            {/* Collapse Toggle Button */}
+            <button
+              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+              className="absolute -right-3 top-10 w-6 h-6 bg-white border border-slate-200 rounded-full flex items-center justify-center text-slate-400 hover:text-primary shadow-sm z-10"
+            >
+              {isSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+            </button>
+
             <div>
-              <img src="https://gvlhjjonhwhifxomwpgu.supabase.co/storage/v1/object/public/assets/Eletromidia%20Horizontal%20(3).png" alt="Eletromidia" className="h-6 w-auto opacity-70" />
+              <img
+                src={isSidebarCollapsed
+                  ? "/assets/em_minimized.png"
+                  : "https://gvlhjjonhwhifxomwpgu.supabase.co/storage/v1/object/public/assets/Eletromidia%20Horizontal%20(3).png"
+                }
+                alt="Eletromidia"
+                className={`${isSidebarCollapsed ? 'h-8' : 'h-6'} w-auto transition-all ${isSidebarCollapsed ? '' : 'opacity-70'}`}
+              />
             </div>
 
             {isPartner && companyThemes[currentUser.companyId]?.logoUrl ? (
-              <div className="flex flex-col gap-3">
+              <div className={`flex flex-col gap-3 ${isSidebarCollapsed ? 'items-center' : ''}`}>
                 <img
                   src={companyThemes[currentUser.companyId].logoUrl}
                   alt={currentUser.companyName}
-                  className="h-14 w-auto object-contain object-left"
+                  className={`${isSidebarCollapsed ? 'h-8 w-8 object-contain' : 'h-14 w-auto object-contain object-left'}`}
                 />
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-secondary text-primary text-[9px] font-black uppercase rounded-lg tracking-[0.2em] w-fit">
-                  <Building2 size={10} /> Parceiro
-                </div>
+                {!isSidebarCollapsed && (
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-secondary text-primary text-[9px] font-black uppercase rounded-lg tracking-[0.2em] w-fit">
+                    <Building2 size={10} /> Parceiro
+                  </div>
+                )}
               </div>
-            ) : isPartner && (
-              <div className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-1 bg-secondary text-primary text-[9px] font-black uppercase rounded-lg tracking-[0.2em]">
-                <Building2 size={10} /> Parceiro
+            ) : (isPartner && (
+              <div className={`mt-1 inline-flex items-center gap-1.5 px-2.5 py-1 bg-secondary text-primary text-[9px] font-black uppercase rounded-lg tracking-[0.2em] ${isSidebarCollapsed ? 'p-1.5' : ''}`}>
+                {isSidebarCollapsed ? <Building2 size={14} /> : <><Building2 size={10} /> Parceiro</>}
               </div>
-            )}
+            ))}
           </div>
 
           <nav className="flex-1 px-6 space-y-2">
-            <SidebarLink icon={<LayoutGrid size={20} />} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+            <SidebarLink icon={<LayoutGrid size={20} />} label="Dashboard" active={activeTab === 'dashboard'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('dashboard')} />
 
             {/* Technicians cannot see "Equipes" or "Mapa Operativo" */}
             {!isTechnician && (
               <>
-                <SidebarLink icon={<MapIcon size={20} />} label="Mapa Operativo" active={activeTab === 'mapa'} onClick={() => setActiveTab('mapa')} />
-                <SidebarLink icon={<ClipboardList size={20} />} label="Gestão de OS" active={activeTab === 'os'} onClick={() => setActiveTab('os')} />
-                <SidebarLink icon={<Users size={20} />} label="Equipes" active={activeTab === 'equipes'} onClick={() => setActiveTab('equipes')} />
-                <SidebarLink icon={<Activity size={20} />} label="Monitoramento" active={activeTab === 'monitoramento'} onClick={() => setActiveTab('monitoramento')} />
+                <SidebarLink icon={<MapIcon size={20} />} label="Mapa Operativo" active={activeTab === 'mapa'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('mapa')} />
+                <SidebarLink icon={<ClipboardList size={20} />} label="Gestão de OS" active={activeTab === 'os'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('os')} />
+                <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatórios" active={activeTab === 'reports'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('reports')} />
+                <SidebarLink icon={<Calculator size={20} />} label="Medição" active={activeTab === 'medicao'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('medicao')} />
+                <SidebarLink icon={<Users size={20} />} label="Funcionários" active={activeTab === 'funcionarios'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('funcionarios')} />
+                <SidebarLink icon={<Users size={20} />} label="Equipes" active={activeTab === 'equipes'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('equipes')} />
+                {!isPartner && (
+                  <>
+                    <SidebarLink icon={<Smartphone size={20} />} label="Gestão de OPEC" active={activeTab === 'opec'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('opec')} />
+                    <SidebarLink icon={<Car size={20} />} label="Controle de Frota" active={activeTab === 'veiculos'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('veiculos')} />
+                  </>
+                )}
+                <SidebarLink icon={<Activity size={20} />} label="Monitoramento" active={activeTab === 'monitoramento'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('monitoramento')} />
               </>
             )}
           </nav>
 
-          <div className="p-8 border-t border-slate-50">
+          <div className={`p-4 border-t border-slate-50 ${isSidebarCollapsed ? 'flex flex-col items-center' : 'p-8'}`}>
             <button
               onClick={() => setIsProfileModalOpen(true)}
-              className={`flex flex-col gap-3 mb-6 p-5 rounded-[24px] border transition-all w-full text-left group ${isPartner ? 'bg-secondary border-slate-800' : 'bg-primary-50/50 border-primary-100 hover:bg-primary-50'}`}
+              className={`flex items-center gap-3 mb-4 rounded-[24px] border transition-all w-full text-left group overflow-hidden ${isPartner ? 'bg-secondary border-slate-800' : 'bg-primary-50/50 border-primary-100 hover:bg-primary-50'} ${isSidebarCollapsed ? 'p-2 justify-center aspect-square' : 'p-5'}`}
             >
-              <div className="flex items-center gap-4">
-                <div className="relative">
-                  <img src={currentUser.avatar} alt={currentUser.name} className="w-12 h-12 rounded-2xl border-2 border-white shadow-sm object-cover" />
+              <div className="relative shrink-0">
+                <img src={currentUser.avatar} alt={currentUser.name} className="w-10 h-10 rounded-2xl border-2 border-white shadow-sm object-cover" />
+                {!isSidebarCollapsed && (
                   <div className="absolute -bottom-1 -right-1 p-1 bg-primary text-white rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
                     <Settings size={10} />
                   </div>
-                </div>
+                )}
+              </div>
+
+              {!isSidebarCollapsed && (
                 <div className="overflow-hidden">
                   <p className={`font-black text-sm truncate tracking-tight ${isPartner ? 'text-white' : 'text-slate-900'}`}>{currentUser.name}</p>
                   <p className={`text-[10px] font-black uppercase tracking-[0.2em] ${isPartner ? 'text-primary' : 'text-primary-600'}`}>{currentUser.role.replace('PARCEIRO_', '')}</p>
                 </div>
-              </div>
-              <div className={`text-[9px] font-black uppercase py-1.5 px-2 rounded-xl text-center tracking-widest ${isPartner ? 'bg-primary/20 text-primary' : 'bg-white text-primary-600 shadow-sm'}`}>
-                {currentUser.companyName}
-              </div>
+              )}
             </button>
-            <button onClick={logout} className="flex items-center gap-3 w-full p-4 text-slate-400 hover:text-primary hover:bg-primary-50 rounded-2xl transition-all font-black text-xs uppercase tracking-widest">
-              <LogOut size={18} />
-              Sair do Sistema
+            <button onClick={logout} className={`flex items-center gap-3 w-full text-slate-400 hover:text-primary hover:bg-primary-50 rounded-2xl transition-all font-black text-xs uppercase tracking-widest ${isSidebarCollapsed ? 'justify-center p-3' : 'p-4'}`}>
+              <LogOut size={isSidebarCollapsed ? 20 : 18} />
+              {!isSidebarCollapsed && <span>Sair do Sistema</span>}
             </button>
           </div>
         </aside>
 
         <main className="flex-1 flex flex-col h-screen overflow-hidden bg-slate-50/30">
-          <header className="bg-white/90 backdrop-blur-xl border-b border-slate-100 px-10 py-6 flex justify-between items-center shrink-0 z-10">
+          <header className="bg-white/90 backdrop-blur-xl border-b border-slate-100 px-4 py-4 md:px-10 md:py-6 flex justify-between items-center shrink-0 z-10">
             <div className="flex items-center gap-6">
+              <button
+                onClick={() => setIsMobileMenuOpen(true)}
+                className="md:hidden p-2 -ml-2 text-slate-400 hover:text-slate-900"
+              >
+                <Menu size={24} />
+              </button>
               <img src="https://gvlhjjonhwhifxomwpgu.supabase.co/storage/v1/object/public/assets/LOGOELETRO.png" alt="Eletromidia" className="h-8 w-auto md:hidden" />
               <div className="flex flex-col">
                 <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase">{activeTab}</h1>
@@ -457,7 +512,16 @@ const App: React.FC = () => {
               <>
                 <SidebarLink icon={<MapIcon size={20} />} label="Mapa Operativo" active={activeTab === 'mapa'} onClick={() => { setActiveTab('mapa'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<ClipboardList size={20} />} label="Gestão de OS" active={activeTab === 'os'} onClick={() => { setActiveTab('os'); setIsMobileMenuOpen(false); }} />
+                <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatórios" active={activeTab === 'reports'} onClick={() => { setActiveTab('reports'); setIsMobileMenuOpen(false); }} />
+                <SidebarLink icon={<Calculator size={20} />} label="Medição" active={activeTab === 'medicao'} onClick={() => { setActiveTab('medicao'); setIsMobileMenuOpen(false); }} />
+                <SidebarLink icon={<Users size={20} />} label="Funcionários" active={activeTab === 'funcionarios'} onClick={() => { setActiveTab('funcionarios'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<Users size={20} />} label="Equipes" active={activeTab === 'equipes'} onClick={() => { setActiveTab('equipes'); setIsMobileMenuOpen(false); }} />
+                {!isPartner && (
+                  <>
+                    <SidebarLink icon={<Smartphone size={20} />} label="Gestão de OPEC" active={activeTab === 'opec'} onClick={() => { setActiveTab('opec'); setIsMobileMenuOpen(false); }} />
+                    <SidebarLink icon={<Car size={20} />} label="Controle de Frota" active={activeTab === 'veiculos'} onClick={() => { setActiveTab('veiculos'); setIsMobileMenuOpen(false); }} />
+                  </>
+                )}
                 <SidebarLink icon={<Activity size={20} />} label="Monitoramento" active={activeTab === 'monitoramento'} onClick={() => { setActiveTab('monitoramento'); setIsMobileMenuOpen(false); }} />
               </>
             )}
@@ -501,18 +565,19 @@ const App: React.FC = () => {
   );
 };
 
-const SidebarLink: React.FC<{ icon: React.ReactNode, label: string, active?: boolean, onClick?: () => void }> = ({ icon, label, active, onClick }) => (
+const SidebarLink: React.FC<{ icon: React.ReactNode, label: string, active?: boolean, collapsed?: boolean, onClick?: () => void }> = ({ icon, label, active, collapsed, onClick }) => (
   <button
     onClick={onClick}
+    title={collapsed ? label : undefined}
     className={`flex items-center gap-4 w-full px-6 py-4.5 rounded-[20px] transition-all font-black text-xs uppercase tracking-[0.1em] ${active
       ? 'bg-primary text-white shadow-2xl shadow-primary-200 scale-[1.02]'
       : 'text-slate-400 hover:bg-primary-50 hover:text-primary'
-      }`}
+      } ${collapsed ? 'justify-center px-0' : ''}`}
   >
     <div className={active ? 'text-white' : 'text-slate-400 group-hover:text-primary'}>
       {React.cloneElement(icon as React.ReactElement, { size: 18 })}
     </div>
-    <span>{label}</span>
+    {!collapsed && <span className="truncate">{label}</span>}
   </button>
 );
 

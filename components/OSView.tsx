@@ -1,10 +1,10 @@
 
 import React, { useState, useMemo } from 'react';
-import { Task, TaskStatus, User, UserRole, AssetType, ServiceType } from '../types';
-import { ClipboardList, Search, Filter, AlertCircle, CheckCircle, Clock, MapPin, Plus, Box } from 'lucide-react';
+import { Task, TaskStatus, User, UserRole, AssetType, ServiceType, AuditLog } from '../types';
+import { ClipboardList, Search, Filter, AlertCircle, CheckCircle, Clock, MapPin, Plus, Box, History, X, ChevronRight } from 'lucide-react';
 import SimpleModal from './SimpleModal';
 import SearchableSelect from './SearchableSelect';
-import { getAssets } from '../api/fieldManagerApi';
+import { getAssets, getAuditLogs, getEvidenceByTaskId } from '../api/fieldManagerApi';
 
 interface Props {
     tasks: Task[];
@@ -20,6 +20,11 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [assets, setAssets] = useState<any[]>([]);
     const [isAssetLoading, setIsAssetLoading] = useState(false);
+
+    // Detailed View State
+    const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+    const [taskLogs, setTaskLogs] = useState<AuditLog[]>([]);
+    const [isLoadingLogs, setIsLoadingLogs] = useState(false);
 
     // Form State (Ported from ChiefView)
     const [assetType, setAssetType] = useState<AssetType>(AssetType.BUS_SHELTER);
@@ -39,6 +44,19 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
             });
         }
     }, [isModalOpen]);
+
+    const handleViewDetails = async (task: Task) => {
+        setSelectedTask(task);
+        setIsLoadingLogs(true);
+        try {
+            const logs = await getAuditLogs('tasks', task.id);
+            setTaskLogs(logs);
+        } catch (err) {
+            console.error('Error fetching logs:', err);
+        } finally {
+            setIsLoadingLogs(false);
+        }
+    };
 
     const handleAssetChange = (code: string) => {
         setAssetId(code);
@@ -111,6 +129,7 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
             case TaskStatus.IN_PROGRESS: return 'text-blue-600 bg-blue-50 border-blue-200';
             case TaskStatus.PENDING: return 'text-primary bg-primary/5 border-primary/20';
             case TaskStatus.BLOCKED: return 'text-slate-500 bg-slate-100 border-slate-200';
+            case TaskStatus.NOT_PERFORMED: return 'text-red-600 bg-red-50 border-red-200';
             default: return 'text-slate-600 bg-white border-slate-200';
         }
     };
@@ -173,7 +192,11 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
                     filteredTasks.map(task => {
                         const tech = users.find(u => u.id === task.technicianId);
                         return (
-                            <div key={task.id} className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-sm hover:shadow-md transition-shadow group">
+                            <div
+                                key={task.id}
+                                onClick={() => handleViewDetails(task)}
+                                className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-sm hover:shadow-md transition-shadow group cursor-pointer"
+                            >
                                 <div className="flex items-start gap-4 flex-1">
                                     <div className={`p-3 rounded-xl ${getStatusColor(task.status)} shrink-0`}>
                                         {task.status === TaskStatus.COMPLETED ? <CheckCircle size={24} /> :
@@ -184,7 +207,7 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
                                             <span className="text-[10px] font-black uppercase tracking-widest text-primary bg-primary/5 px-2 py-1 rounded-md">{task.asset?.type || 'Ativo'}</span>
                                             <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-md border ${getStatusColor(task.status)}`}>{task.status}</span>
                                         </div>
-                                        <h3 className="text-lg font-black text-slate-800">{task.serviceType} <span className="text-primary/40 text-xs ml-1">#{task.assetId}</span></h3>
+                                        <h3 className="text-lg font-black text-slate-800 group-hover:text-primary transition-colors">{task.serviceType} <span className="text-primary/40 text-xs ml-1">#{task.assetId}</span></h3>
                                         <p className="text-sm font-bold text-slate-500 flex items-center gap-1 mt-1">
                                             <MapPin size={14} /> {task.asset?.location?.address || 'Sem endereço'}
                                         </p>
@@ -204,12 +227,83 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
                                         <p className="text-[8px] md:text-[10px] font-black uppercase text-slate-400 tracking-widest">Data</p>
                                         <p className="text-xs md:text-sm font-bold text-slate-700">{task.scheduledDate}</p>
                                     </div>
+                                    <ChevronRight className="text-slate-300 group-hover:translate-x-1 transition-transform" size={20} />
                                 </div>
                             </div>
                         );
                     })
                 )}
             </div>
+
+            {/* Task Details & Audit Modal */}
+            <SimpleModal isOpen={!!selectedTask} onClose={() => setSelectedTask(null)} title="Histórico e Detalhes da Ordem de Serviço">
+                {selectedTask && (
+                    <div className="space-y-6">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Status Atual</p>
+                                <span className={`inline-block text-xs font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border ${getStatusColor(selectedTask.status)}`}>
+                                    {selectedTask.status}
+                                </span>
+                            </div>
+                            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Empresa Responsável</p>
+                                <p className="text-xs font-black text-slate-700 uppercase">{selectedTask.companyId}</p>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 className="flex items-center gap-2 text-xs font-black text-primary uppercase tracking-[0.2em] mb-4">
+                                <History size={16} /> Linha do Tempo de Auditoria
+                            </h4>
+                            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 scrollbar-thin">
+                                {isLoadingLogs ? (
+                                    <div className="flex items-center justify-center py-8">
+                                        <div className="w-6 h-6 border-2 border-primary border-t-transparent animate-spin rounded-full" />
+                                    </div>
+                                ) : taskLogs.length === 0 ? (
+                                    <p className="text-center py-8 text-slate-400 font-bold text-sm italic">Nenhum histórico disponível para esta OS.</p>
+                                ) : (
+                                    taskLogs.map((log, idx) => (
+                                        <div key={log.id} className="relative pl-6 pb-4 border-l-2 border-slate-100 last:border-0 last:pb-0">
+                                            <div className="absolute left-[-9px] top-0 w-4 h-4 rounded-full bg-white border-2 border-primary" />
+                                            <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <div>
+                                                        <p className="text-xs font-black text-slate-800">{log.userName}</p>
+                                                        <p className="text-[10px] font-bold text-slate-400">{log.createdAt.toLocaleString('pt-BR')}</p>
+                                                    </div>
+                                                    <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-md ${log.action === 'INSERT' ? 'bg-green-100 text-green-700' :
+                                                            log.action === 'UPDATE' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'
+                                                        }`}>
+                                                        {log.action === 'INSERT' ? 'CRIADO' : log.action === 'UPDATE' ? 'ATUALIZADO' : 'DELETADO'}
+                                                    </span>
+                                                </div>
+                                                {log.action === 'UPDATE' && log.newData.status !== log.oldData.status && (
+                                                    <p className="text-[10px] font-bold text-slate-600">
+                                                        Alterou status de <span className="text-slate-400 line-through">{log.oldData.status}</span> para <span className="text-primary">{log.newData.status}</span>
+                                                    </p>
+                                                )}
+                                                {log.action === 'INSERT' && (
+                                                    <p className="text-[10px] font-bold text-slate-600">Ordem de serviço aberta no sistema.</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="pt-4 border-t border-slate-100">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Descrição do Serviço</p>
+                            <div className="bg-slate-50 p-4 rounded-xl text-xs font-bold text-slate-600 leading-relaxed">
+                                {selectedTask.description || 'Sem descrição detalhada.'}
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </SimpleModal>
+
             <SimpleModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Nova Ordem de Serviço">
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">

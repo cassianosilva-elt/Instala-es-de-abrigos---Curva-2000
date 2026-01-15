@@ -123,7 +123,7 @@ const MapaView: React.FC<Props> = ({ tasks }) => {
           )}
         </GoogleMap>
 
-        <div className="absolute bottom-6 right-6 bg-white/90 backdrop-blur p-4 rounded-2xl border border-slate-200 shadow-2xl max-w-xs pointer-events-none">
+        <div className="absolute bottom-4 left-4 right-4 md:left-auto md:bottom-6 md:right-6 bg-white/90 backdrop-blur p-4 rounded-2xl border border-slate-200 shadow-2xl md:max-w-xs pointer-events-none">
           <h4 className="text-sm font-black text-slate-900 flex items-center gap-2 mb-2">
             <Info size={16} className="text-primary" />
             Legenda Operativa

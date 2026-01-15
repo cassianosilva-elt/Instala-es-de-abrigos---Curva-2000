@@ -64,6 +64,19 @@ export interface User {
   companyName: string;
   avatar: string;
   email: string;
+  status?: 'ACTIVE' | 'PENDING';
+  shift?: string; // 'Turno'
+  code?: string; // 'Cadastro'
+  leaderName?: string; // 'Lider'
+  originalStatus?: string; // 'Status' from import
+}
+
+export interface Employee extends User {
+  status: 'ACTIVE' | 'PENDING';
+  shift?: string;
+  code?: string;
+  leaderName?: string;
+  originalStatus?: string;
 }
 
 export interface Team {
@@ -73,6 +86,40 @@ export interface Team {
   name: string;
   companyId: string;
 }
+
+export interface Vehicle {
+  id: string;
+  model: string;
+  plate: string;
+  companyId: string;
+  currentKm: number;
+  lastMaintenanceKm: number;
+  status: 'Disponível' | 'Em Manutenção' | 'Em Uso';
+  maintenanceNotes?: string;
+  createdAt?: Date;
+}
+
+
+export interface VehicleLog {
+  id: string;
+  userId: string;
+  userName: string;
+  shift: string;
+  occurrenceTime: Date;
+  plate: string;
+  model: string;
+  companyId: string;
+  vehicleId?: string;
+  startKm?: number;
+  endKm?: number;
+  isActive?: boolean;
+  checkinTime?: Date;
+  additionalCollaborators?: string[];
+  createdAt?: Date;
+}
+
+
+
 
 export interface Asset {
   id: string;
@@ -91,6 +138,7 @@ export interface TaskEvidence {
   gpsLat?: number;
   gpsLng?: number;
   gpsAccuracy?: number;
+  syncPending?: boolean;
 }
 
 export interface Task {
@@ -132,4 +180,51 @@ export interface ChatConversation {
   id: string;
   participants: string[]; // User IDs
   lastMessage?: ChatMessage;
+}
+
+export interface Absence {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  reason: 'Falta Injustificada' | 'Falta Justificada' | 'Day Off' | 'Atestado' | 'Banco de Horas' | 'Outros';
+  description?: string;
+  companyId: string;
+  evidenceUrl?: string;
+}
+
+export interface OpecItem {
+  id: string;
+  opecName: string;
+  employeeId: string;
+  assignmentDate: string;
+  companyId: string;
+  createdAt: string;
+  employee?: User; // Hydrated employee for UI
+}
+export interface AuditLog {
+  id: string;
+  tableName: string;
+  recordId: string;
+  action: 'INSERT' | 'UPDATE' | 'DELETE';
+  oldData: any;
+  newData: any;
+  userId: string;
+  createdAt: Date;
+  userName?: string; // Hydrated for UI
+}
+
+export interface OpecDevice {
+  id: string;
+  assetCode: string;
+  phoneNumber?: string;
+  brand?: string;
+  model?: string;
+  serialNumber?: string;
+  capacity?: string;
+  imei1?: string;
+  imei2?: string;
+  observations?: string;
+  companyId: string;
+  createdAt: string;
 }

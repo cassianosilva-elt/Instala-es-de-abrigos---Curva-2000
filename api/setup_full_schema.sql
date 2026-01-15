@@ -48,6 +48,16 @@ CREATE TABLE chat_messages (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- 5. OPEC MANAGEMENT
+CREATE TABLE opec_management (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  opec_name TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  assignment_date TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  company_id TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- ENABLE RLS
 ALTER TABLE assets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE teams ENABLE ROW LEVEL SECURITY;

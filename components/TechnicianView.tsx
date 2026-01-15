@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { User, Task, TaskStatus, ServiceType, AssetType, EvidenceStage } from '../types';
 import { Camera, MapPin, Clock, AlertTriangle, CheckCircle2, ChevronRight, X, Loader2 } from 'lucide-react';
 import { uploadEvidence, completeTask, updateTaskStatus } from '../api/fieldManagerApi';
+import { queueOfflineEvidence } from '../utils/offlineSync';
 
 interface Props {
   technician: User;
@@ -13,8 +14,20 @@ interface Props {
 const TechnicianView: React.FC<Props> = ({ technician, tasks, onUpdateTask }) => {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(!navigator.onLine);
   // Removed evidenceDraft as we sync directly with task.evidence now
   const [filterStatus, setFilterStatus] = useState<TaskStatus>(TaskStatus.PENDING);
+
+  React.useEffect(() => {
+    const handleOnline = () => setIsOfflineMode(false);
+    const handleOffline = () => setIsOfflineMode(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const displayedTasks = tasks.filter(t => t.status === filterStatus);
 
@@ -49,13 +62,52 @@ const TechnicianView: React.FC<Props> = ({ technician, tasks, onUpdateTask }) =>
 
       setIsUploading(true);
 
+      const handleOfflineCapture = async (lat: number, lng: number) => {
+        try {
+          await queueOfflineEvidence(selectedTask.id, step, file, { lat, lng });
+
+          const localUrl = URL.createObjectURL(file);
+          const tempEvidence = {
+            id: `temp_${Date.now()}`,
+            taskId: selectedTask.id,
+            stage: step,
+            photoUrl: localUrl,
+            capturedAt: new Date(),
+            gpsLat: lat,
+            gpsLng: lng,
+            gpsAccuracy: 10,
+            syncPending: true // New property for UI
+          };
+
+          const updatedTask = {
+            ...selectedTask,
+            evidence: [...(selectedTask.evidence || []), tempEvidence as any]
+          };
+
+          setSelectedTask(updatedTask);
+          onUpdateTask(updatedTask);
+        } catch (error) {
+          alert("Erro ao salvar para sincronização offline: " + error);
+        } finally {
+          setIsUploading(false);
+        }
+      };
+
       navigator.geolocation.getCurrentPosition(async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        if (!navigator.onLine) {
+          await handleOfflineCapture(lat, lng);
+          return;
+        }
+
         try {
           const evidence = await uploadEvidence(
             selectedTask.id,
             step,
             file,
-            { lat: pos.coords.latitude, lng: pos.coords.longitude }
+            { lat, lng }
           );
 
           const updatedTask = {
@@ -66,7 +118,8 @@ const TechnicianView: React.FC<Props> = ({ technician, tasks, onUpdateTask }) =>
           setSelectedTask(updatedTask);
           onUpdateTask(updatedTask);
         } catch (error) {
-          alert("Erro ao enviar foto: " + error);
+          console.warn("Retrying upload as offline due to error:", error);
+          await handleOfflineCapture(lat, lng);
         } finally {
           setIsUploading(false);
         }
@@ -139,7 +192,7 @@ const TechnicianView: React.FC<Props> = ({ technician, tasks, onUpdateTask }) =>
 
   if (selectedTask) {
     return (
-      <div className="fixed inset-0 z-50 bg-white flex flex-col md:max-w-md md:mx-auto md:shadow-2xl md:relative md:rounded-2xl overflow-hidden">
+      <div className="fixed inset-0 z-50 bg-white flex flex-col md:max-w-md md:mx-auto md:shadow-2xl md:relative md:rounded-2xl overflow-hidden max-h-screen md:max-h-[90vh]">
         <header className="bg-primary text-white p-4 flex items-center justify-between shrink-0">
           <button onClick={() => setSelectedTask(null)} className="p-2 hover:bg-white/20 rounded-lg"><X /></button>
           <h2 className="font-extrabold text-lg">Execução de OS</h2>
@@ -169,6 +222,7 @@ const TechnicianView: React.FC<Props> = ({ technician, tasks, onUpdateTask }) =>
                 label="1. Foto Antes"
                 captured={selectedTask?.evidence?.some(e => e.stage === EvidenceStage.BEFORE) || false}
                 image={selectedTask?.evidence?.find(e => e.stage === EvidenceStage.BEFORE)?.photoUrl}
+                isSyncing={selectedTask?.evidence?.find(e => e.stage === EvidenceStage.BEFORE)?.syncPending}
                 onClick={() => capturePhoto(EvidenceStage.BEFORE)}
                 loading={isUploading}
               />
@@ -176,6 +230,7 @@ const TechnicianView: React.FC<Props> = ({ technician, tasks, onUpdateTask }) =>
                 label="2. Foto Durante"
                 captured={selectedTask?.evidence?.some(e => e.stage === EvidenceStage.DURING) || false}
                 image={selectedTask?.evidence?.find(e => e.stage === EvidenceStage.DURING)?.photoUrl}
+                isSyncing={selectedTask?.evidence?.find(e => e.stage === EvidenceStage.DURING)?.syncPending}
                 onClick={() => capturePhoto(EvidenceStage.DURING)}
                 loading={isUploading}
               />
@@ -183,6 +238,7 @@ const TechnicianView: React.FC<Props> = ({ technician, tasks, onUpdateTask }) =>
                 label="3. Foto Depois"
                 captured={selectedTask?.evidence?.some(e => e.stage === EvidenceStage.AFTER) || false}
                 image={selectedTask?.evidence?.find(e => e.stage === EvidenceStage.AFTER)?.photoUrl}
+                isSyncing={selectedTask?.evidence?.find(e => e.stage === EvidenceStage.AFTER)?.syncPending}
                 onClick={() => capturePhoto(EvidenceStage.AFTER)}
                 loading={isUploading}
               />
@@ -371,7 +427,7 @@ const TechnicianView: React.FC<Props> = ({ technician, tasks, onUpdateTask }) =>
   );
 };
 
-const PhotoStep: React.FC<{ label: string, captured: boolean, image?: string, onClick: () => void, loading: boolean }> = ({ label, captured, image, onClick, loading }) => (
+const PhotoStep: React.FC<{ label: string, captured: boolean, isSyncing?: boolean, image?: string, onClick: () => void, loading: boolean }> = ({ label, captured, isSyncing, image, onClick, loading }) => (
   <div
     onClick={!loading ? onClick : undefined}
     className={`relative h-32 md:h-44 rounded-xl md:rounded-2xl border-2 border-dashed flex flex-col items-center justify-center transition-all overflow-hidden cursor-pointer ${captured ? 'border-primary bg-primary/5' : 'border-slate-300 bg-slate-50 hover:border-primary/40 hover:bg-primary/5'
@@ -385,7 +441,9 @@ const PhotoStep: React.FC<{ label: string, captured: boolean, image?: string, on
     ) : captured ? (
       <>
         <img src={image} alt={label} className="absolute inset-0 w-full h-full object-cover" />
-        <div className="absolute top-2 right-2 md:top-3 md:right-3 p-1 md:p-1.5 bg-primary text-white rounded-full shadow-lg"><CheckCircle2 size={12} className="md:w-4 md:h-4" /></div>
+        <div className="absolute top-2 right-2 md:top-3 md:right-3 p-1 md:p-1.5 bg-primary text-white rounded-full shadow-lg">
+          {isSyncing ? <Clock size={12} className="md:w-4 md:h-4 animate-pulse" /> : <CheckCircle2 size={12} className="md:w-4 md:h-4" />}
+        </div>
         <div className="absolute bottom-2 left-2 right-2 md:bottom-3 md:left-3 md:right-3 bg-white/90 backdrop-blur-sm py-1.5 md:py-2 rounded-lg text-slate-900 text-[8px] md:text-[10px] font-black text-center uppercase tracking-widest">{label}</div>
       </>
     ) : (
