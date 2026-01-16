@@ -2,11 +2,11 @@
 import React, { useMemo, useState } from 'react';
 import { User, Task, TaskStatus, Team, UserRole, AssetType, ServiceType } from '../types';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { MapPin, TrendingUp, Shield, Activity, Download, Building2, Plus, Clock, Box, FileSpreadsheet } from 'lucide-react';
+import { MapPin, TrendingUp, Shield, Activity, Download, Building2, Plus, Clock, Box } from 'lucide-react';
 import SimpleModal from './SimpleModal';
 import SearchableSelect from './SearchableSelect';
 import { getAssets } from '../api/fieldManagerApi';
-import AssetImportModal from './AssetImportModal';
+
 import EvidenceAuditModal from './EvidenceAuditModal';
 
 interface Props {
@@ -23,7 +23,7 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [assets, setAssets] = useState<any[]>([]);
   const [isAssetLoading, setIsAssetLoading] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
 
   // Form State
@@ -213,15 +213,7 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
             </button>
           )}
 
-          {isInternalChief && (
-            <button
-              onClick={() => setIsImportModalOpen(true)}
-              className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 md:px-6 py-2.5 md:py-3 bg-emerald-500 text-white font-black rounded-xl md:rounded-2xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 active:scale-95"
-            >
-              <FileSpreadsheet size={18} />
-              <span className="text-xs md:text-sm">Importar Planilha</span>
-            </button>
-          )}
+
 
           <button
             onClick={handleExportCSV}
@@ -410,15 +402,7 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
         </form>
       </SimpleModal>
 
-      <AssetImportModal
-        isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
-        onSuccess={() => {
-          // Refresh assets
-          getAssets().then(setAssets);
-        }}
-        companies={allPartnerCompanies}
-      />
+
 
       <EvidenceAuditModal
         isOpen={isAuditModalOpen}

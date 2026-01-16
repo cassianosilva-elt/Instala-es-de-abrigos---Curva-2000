@@ -17,13 +17,15 @@ import { EmployeesView } from './components/EmployeesView';
 import { VehicleControlView } from './components/VehicleControlView';
 import OpecManagementView from './components/OpecManagementView';
 import { ReportsView } from './components/ReportsView';
+import { DailyReportView } from './components/DailyReportView';
+import { RouteControlView } from './components/RouteControlView';
 import { supabase } from './api/supabaseClient';
 import { ThemeProvider, companyThemes } from './contexts/ThemeContext';
-import { LogOut, LayoutGrid, Users, Map as MapIcon, ClipboardList, ShieldCheck, Building2, Activity, Loader2, X, Settings, Calculator, Menu, ChevronLeft, ChevronRight, Car, Smartphone, FileSpreadsheet } from 'lucide-react';
+import { LogOut, LayoutGrid, Users, Map as MapIcon, ClipboardList, ShieldCheck, Building2, Activity, Loader2, X, Settings, Calculator, Menu, ChevronLeft, ChevronRight, Car, Smartphone, FileSpreadsheet, ListTodo, Map } from 'lucide-react';
 import { getTasksByUserId, getTeams, getAllUsers, createTeam, updateTeam, deleteTeam } from './api/fieldManagerApi';
 import { useOfflineSync } from './hooks/useOfflineSync';
 
-type Tab = 'dashboard' | 'equipes' | 'mapa' | 'os' | 'monitoramento' | 'medicao' | 'funcionarios' | 'veiculos' | 'opec' | 'reports';
+type Tab = 'dashboard' | 'equipes' | 'mapa' | 'os' | 'monitoramento' | 'medicao' | 'funcionarios' | 'veiculos' | 'opec' | 'reports' | 'daily_report' | 'route_control';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -331,6 +333,10 @@ const App: React.FC = () => {
         return isPartner ? null : <OpecManagementView currentUser={currentUser} />;
       case 'reports':
         return <ReportsView tasks={visibleTasks} users={visibleUsers} currentUser={currentUser} />;
+      case 'daily_report':
+        return <DailyReportView currentUser={currentUser} />;
+      case 'route_control':
+        return <RouteControlView currentUser={currentUser} />;
       case 'dashboard':
       default:
         const role = currentUser.role;
@@ -399,6 +405,7 @@ const App: React.FC = () => {
               <>
                 <SidebarLink icon={<MapIcon size={20} />} label="Mapa Operativo" active={activeTab === 'mapa'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('mapa')} />
                 <SidebarLink icon={<ClipboardList size={20} />} label="Gestão de OS" active={activeTab === 'os'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('os')} />
+                <SidebarLink icon={<ListTodo size={20} />} label="Relatório Diário" active={activeTab === 'daily_report'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('daily_report')} />
                 <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatórios" active={activeTab === 'reports'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('reports')} />
                 <SidebarLink icon={<Calculator size={20} />} label="Medição" active={activeTab === 'medicao'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('medicao')} />
                 <SidebarLink icon={<Users size={20} />} label="Funcionários" active={activeTab === 'funcionarios'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('funcionarios')} />
@@ -453,10 +460,10 @@ const App: React.FC = () => {
               </button>
               <img src="https://gvlhjjonhwhifxomwpgu.supabase.co/storage/v1/object/public/assets/LOGOELETRO.png" alt="Eletromidia" className="h-8 w-auto md:hidden" />
               <div className="flex flex-col">
-                <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase">{activeTab}</h1>
+                <h1 className="text-xl md:text-3xl font-black text-slate-900 tracking-tighter uppercase leading-none">OPERAÇÃO CONCESSÃO SP - MATRIZ</h1>
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{currentUser.companyName}</p>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{activeTab} • {currentUser.companyName}</p>
                 </div>
               </div>
             </div>
@@ -512,6 +519,7 @@ const App: React.FC = () => {
               <>
                 <SidebarLink icon={<MapIcon size={20} />} label="Mapa Operativo" active={activeTab === 'mapa'} onClick={() => { setActiveTab('mapa'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<ClipboardList size={20} />} label="Gestão de OS" active={activeTab === 'os'} onClick={() => { setActiveTab('os'); setIsMobileMenuOpen(false); }} />
+                <SidebarLink icon={<ListTodo size={20} />} label="Relatório Diário" active={activeTab === 'daily_report'} onClick={() => { setActiveTab('daily_report'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatórios" active={activeTab === 'reports'} onClick={() => { setActiveTab('reports'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<Calculator size={20} />} label="Medição" active={activeTab === 'medicao'} onClick={() => { setActiveTab('medicao'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<Users size={20} />} label="Funcionários" active={activeTab === 'funcionarios'} onClick={() => { setActiveTab('funcionarios'); setIsMobileMenuOpen(false); }} />

@@ -9,6 +9,7 @@ import {
     createVehicle,
     updateVehicle,
     deleteVehicle,
+    bulkDeleteVehicles,
     getEmployees
 } from '../api/fieldManagerApi';
 import { Employee } from '../types';
@@ -30,8 +31,13 @@ import {
     Trash2,
     ChevronDown,
     Users as UsersIcon,
-    X
+    X,
+    Upload,
+    Wrench,
+    Check
 } from 'lucide-react';
+import SimpleModal from './SimpleModal';
+import VehicleImportModal from './VehicleImportModal';
 
 interface VehicleControlViewProps {
     currentUser: User;
@@ -39,14 +45,19 @@ interface VehicleControlViewProps {
 
 export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentUser }) => {
     const [activeTab, setActiveTab] = useState<'registros' | 'frota'>('registros');
+    useEffect(() => {
+        setSelectedVehicleIds([]);
+    }, [activeTab]);
     const [logs, setLogs] = useState<VehicleLog[]>([]);
     const [vehicles, setVehicles] = useState<Vehicle[]>([]);
     const [loading, setLoading] = useState(true);
     const [isLogModalOpen, setIsLogModalOpen] = useState(false);
     const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
     const [isCheckinModalOpen, setIsCheckinModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [availableEmployees, setAvailableEmployees] = useState<Employee[]>([]);
+    const [selectedVehicleIds, setSelectedVehicleIds] = useState<string[]>([]);
 
 
     // New Log Form State
@@ -63,12 +74,16 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
     const [formEndKm, setFormEndKm] = useState<number | ''>('');
 
     // New Vehicle Form State
+    const [vehTag, setVehTag] = useState('');
     const [vehModel, setVehModel] = useState('');
     const [vehPlate, setVehPlate] = useState('');
     const [vehKm, setVehKm] = useState<number | ''>('');
     const [vehLastMaint, setVehLastMaint] = useState<number | ''>('');
 
     const [submitting, setSubmitting] = useState(false);
+    const [maintFinishKm, setMaintFinishKm] = useState<number | ''>('');
+    const [maintenanceVehicle, setMaintenanceVehicle] = useState<Vehicle | null>(null);
+    const [isMaintModalOpen, setIsMaintModalOpen] = useState(false);
 
     useEffect(() => {
         loadAllData();
@@ -154,6 +169,7 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
         setSubmitting(true);
         try {
             await createVehicle({
+                tag: vehTag,
                 model: vehModel,
                 plate: vehPlate.toUpperCase(),
                 companyId: currentUser.companyId,
@@ -162,6 +178,7 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
                 status: 'Disponível'
             });
             setIsVehicleModalOpen(false);
+            setVehTag('');
             setVehModel('');
             setVehPlate('');
             setVehKm('');
@@ -174,13 +191,82 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
         }
     };
 
+    const handleSetMaintenance = async (vehicle: Vehicle) => {
+        if (!confirm(`Deseja colocar o veículo ${vehicle.plate} em manutenção?`)) return;
+        try {
+            await updateVehicle(vehicle.id, { status: 'Em Manutenção' });
+            loadAllData();
+        } catch (err) {
+            console.error('Error setting maintenance:', err);
+        }
+    };
+
+    const handleCompleteMaintenance = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!maintenanceVehicle || !maintFinishKm) return;
+
+        if (Number(maintFinishKm) < maintenanceVehicle.currentKm) {
+            alert('A quilometragem de conclusão não pode ser menor que a atual.');
+            return;
+        }
+
+        setSubmitting(true);
+        try {
+            await updateVehicle(maintenanceVehicle.id, {
+                status: 'Disponível',
+                currentKm: Number(maintFinishKm),
+                lastMaintenanceKm: Number(maintFinishKm)
+            });
+            setIsMaintModalOpen(false);
+            setMaintenanceVehicle(null);
+            setMaintFinishKm('');
+            loadAllData();
+        } catch (err) {
+            console.error('Error completing maintenance:', err);
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     const handleDeleteVehicle = async (id: string) => {
         if (!confirm('Tem certeza que deseja remover este veículo da frota?')) return;
         try {
             await deleteVehicle(id);
+            setSelectedVehicleIds(prev => prev.filter(vid => vid !== id));
             loadAllData();
         } catch (err) {
             console.error('Error deleting vehicle:', err);
+        }
+    };
+
+    const handleBulkDeleteVehicles = async () => {
+        if (!selectedVehicleIds.length) return;
+        if (!confirm(`Tem certeza que deseja remover ${selectedVehicleIds.length} veículos da frota?`)) return;
+
+        setSubmitting(true);
+        try {
+            await bulkDeleteVehicles(selectedVehicleIds);
+            setSelectedVehicleIds([]);
+            loadAllData();
+        } catch (err) {
+            console.error('Error bulk deleting vehicles:', err);
+            alert('Erro ao realizar a exclusão em massa.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const toggleVehicleSelection = (id: string) => {
+        setSelectedVehicleIds(prev =>
+            prev.includes(id) ? prev.filter(vid => vid !== id) : [...prev, id]
+        );
+    };
+
+    const toggleAllVehicles = () => {
+        if (selectedVehicleIds.length === filteredVehicles.length) {
+            setSelectedVehicleIds([]);
+        } else {
+            setSelectedVehicleIds(filteredVehicles.map(v => v.id));
         }
     };
 
@@ -192,7 +278,8 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
 
     const filteredVehicles = vehicles.filter(v =>
         v.model.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        v.plate.toLowerCase().includes(searchTerm.toLowerCase())
+        v.plate.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        v.tag?.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     const stats = useMemo(() => {
@@ -231,13 +318,31 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
                             Registrar Saída
                         </button>
                     ) : (
-                        <button
-                            onClick={() => setIsVehicleModalOpen(true)}
-                            className="flex items-center justify-center gap-3 px-8 py-4 bg-primary text-white rounded-3xl font-black text-xs uppercase tracking-[0.2em] shadow-2xl shadow-primary/20 hover:scale-105 transition-all group"
-                        >
-                            <Plus size={18} className="group-hover:rotate-90 transition-transform duration-300" />
-                            Novo Veículo
-                        </button>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setIsImportModalOpen(true)}
+                                className="flex items-center justify-center gap-3 px-6 py-4 bg-white border border-slate-200 text-slate-600 rounded-3xl font-black text-xs uppercase tracking-[0.2em] shadow-sm hover:bg-slate-50 transition-all"
+                            >
+                                <Upload size={18} />
+                                Importar
+                            </button>
+                            <button
+                                onClick={() => setIsVehicleModalOpen(true)}
+                                className="flex items-center justify-center gap-3 px-8 py-4 bg-primary text-white rounded-3xl font-black text-xs uppercase tracking-[0.2em] shadow-2xl shadow-primary/20 hover:scale-105 transition-all group"
+                            >
+                                <Plus size={18} className="group-hover:rotate-90 transition-transform duration-300" />
+                                Novo Veículo
+                            </button>
+                            {selectedVehicleIds.length > 0 && (
+                                <button
+                                    onClick={handleBulkDeleteVehicles}
+                                    className="flex items-center justify-center gap-3 px-8 py-4 bg-red-600 text-white rounded-3xl font-black text-xs uppercase tracking-[0.2em] shadow-2xl shadow-red-200 hover:scale-105 transition-all group animate-in zoom-in-95"
+                                >
+                                    <Trash2 size={18} />
+                                    Excluir Selecionados ({selectedVehicleIds.length})
+                                </button>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>
@@ -387,6 +492,15 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="border-b border-slate-50">
+                                    <th className="px-8 py-6 w-10">
+                                        <input
+                                            type="checkbox"
+                                            checked={filteredVehicles.length > 0 && selectedVehicleIds.length === filteredVehicles.length}
+                                            onChange={toggleAllVehicles}
+                                            className="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
+                                        />
+                                    </th>
+                                    <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Tag</th>
                                     <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Veículo</th>
                                     <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Quilometragem</th>
                                     <th className="px-8 py-6 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Próx. Manutenção</th>
@@ -400,7 +514,18 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
                                     const progress = Math.min(100, (kmSinceLast / 10000) * 100);
                                     const isAlert = kmSinceLast >= 10000;
                                     return (
-                                        <tr key={v.id} className="hover:bg-slate-50/50 transition-colors group">
+                                        <tr key={v.id} className={`hover:bg-slate-50/50 transition-colors group ${selectedVehicleIds.includes(v.id) ? 'bg-primary/5' : ''}`}>
+                                            <td className="px-8 py-6">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedVehicleIds.includes(v.id)}
+                                                    onChange={() => toggleVehicleSelection(v.id)}
+                                                    className="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
+                                                />
+                                            </td>
+                                            <td className="px-8 py-6">
+                                                <span className="text-sm font-black text-slate-900 tracking-tight">{v.tag || '-'}</span>
+                                            </td>
                                             <td className="px-8 py-6">
                                                 <div className="flex items-center gap-4">
                                                     <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${isAlert ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-400'}`}>
@@ -442,10 +567,32 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
                                             </td>
                                             <td className="px-8 py-6 text-right print:hidden">
                                                 <div className="flex justify-end gap-2">
-                                                    <button className="p-2 text-slate-400 hover:text-primary transition-colors"><Settings2 size={16} /></button>
+                                                    {v.status === 'Disponível' && (
+                                                        <button
+                                                            onClick={() => handleSetMaintenance(v)}
+                                                            className="p-2 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-600 hover:text-white transition-all shadow-sm"
+                                                            title="Manutenção"
+                                                        >
+                                                            <Wrench size={16} />
+                                                        </button>
+                                                    )}
+                                                    {v.status === 'Em Manutenção' && (['CHEFE', 'LIDER'].includes(currentUser.role)) && (
+                                                        <button
+                                                            onClick={() => {
+                                                                setMaintenanceVehicle(v);
+                                                                setMaintFinishKm(v.currentKm);
+                                                                setIsMaintModalOpen(true);
+                                                            }}
+                                                            className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-600 hover:text-white transition-all shadow-sm"
+                                                            title="Concluir Manutenção"
+                                                        >
+                                                            <Check size={16} />
+                                                        </button>
+                                                    )}
                                                     <button
                                                         onClick={() => handleDeleteVehicle(v.id)}
-                                                        className="p-2 text-slate-400 hover:text-red-600 transition-colors"
+                                                        className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all shadow-sm"
+                                                        title="Remover"
                                                     >
                                                         <Trash2 size={16} />
                                                     </button>
@@ -490,7 +637,7 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
                                     >
                                         <option value="">Escolha um carro disponível</option>
                                         {vehicles.filter(v => v.status === 'Disponível').map(v => (
-                                            <option key={v.id} value={v.id}>{v.model} - {v.plate}</option>
+                                            <option key={v.id} value={v.id}>[{v.tag || 'S/T'}] {v.model} - {v.plate}</option>
                                         ))}
                                     </select>
                                     <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
@@ -728,6 +875,16 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
                         </div>
 
                         <form onSubmit={handleCreateVehicle} className="p-10 space-y-5 overflow-y-auto">
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] ml-2">Tag (Nº do Carro)</label>
+                                <input
+                                    type="text"
+                                    placeholder="Ex: 2420"
+                                    value={vehTag}
+                                    onChange={(e) => setVehTag(e.target.value)}
+                                    className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-slate-900 focus:ring-4 focus:ring-primary/5 transition-all text-sm font-bold uppercase"
+                                />
+                            </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] ml-2">Modelo</label>
@@ -791,6 +948,57 @@ export const VehicleControlView: React.FC<VehicleControlViewProps> = ({ currentU
                         </form>
                     </div>
                 </div>
+            )}
+            {isImportModalOpen && (
+                <VehicleImportModal
+                    isOpen={isImportModalOpen}
+                    onClose={() => setIsImportModalOpen(false)}
+                    onSuccess={() => {
+                        loadAllData();
+                        setIsImportModalOpen(false);
+                    }}
+                    currentUser={currentUser}
+                />
+            )}
+            {isMaintModalOpen && (
+                <SimpleModal
+                    isOpen={isMaintModalOpen}
+                    onClose={() => setIsMaintModalOpen(false)}
+                    title="Concluir Manutenção"
+                >
+                    <form onSubmit={handleCompleteMaintenance} className="p-10 space-y-6">
+                        <div className="p-6 bg-slate-50 rounded-2xl space-y-2 border border-slate-100">
+                            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest text-center">Veículo</p>
+                            <p className="text-xl font-black text-slate-900 text-center uppercase">{maintenanceVehicle?.model}</p>
+                            <p className="text-xs font-bold text-slate-400 text-center uppercase font-mono tracking-widest">{maintenanceVehicle?.plate}</p>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] ml-2">KM Atual (Pós Manutenção)</label>
+                            <div className="relative">
+                                <Gauge className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                                <input
+                                    type="number"
+                                    required
+                                    placeholder="Informe o KM atual..."
+                                    value={maintFinishKm}
+                                    onChange={(e) => setMaintFinishKm(e.target.value ? Number(e.target.value) : '')}
+                                    className="w-full pl-14 pr-6 py-5 bg-slate-50 border-none rounded-2xl text-slate-900 focus:ring-4 focus:ring-primary/5 transition-all text-lg font-black"
+                                />
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-medium ml-2 uppercase tracking-tighter italic">KM na entrada: {maintenanceVehicle?.currentKm.toLocaleString()} KM</p>
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={submitting}
+                            className="w-full py-5 bg-primary text-white rounded-[2rem] font-black text-xs uppercase tracking-[0.2em] shadow-2xl shadow-primary/20 hover:scale-[1.02] transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+                        >
+                            {submitting ? <Loader2 className="animate-spin" /> : <Check size={18} />}
+                            Concluir Manutenção e Liberar
+                        </button>
+                    </form>
+                </SimpleModal>
             )}
         </div>
     );

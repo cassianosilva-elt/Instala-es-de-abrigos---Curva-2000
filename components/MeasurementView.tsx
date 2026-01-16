@@ -1,43 +1,53 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Asset, User, TaskEvidence } from '../types';
-import { getAssets, getEvidenceByAssetId, getMeasurementPrices, bulkUpdateMeasurementPrices } from '../api/fieldManagerApi';
-import { Search, Building2, CheckCircle2, ChevronDown, Download, Plus, Trash2, Calculator, Save, Image as ImageIcon, X, Upload, Check } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { Asset, User, TaskEvidence, AssetMeasurement } from '../types';
+import { getAssets, getEvidenceByAssetId, getMeasurementPrices, saveAssetMeasurement } from '../api/fieldManagerApi';
+import { Search, Building2, CheckCircle2, ChevronDown, Download, Plus, Trash2, Calculator, Save, Image as ImageIcon, X, Upload, Check, ChevronRight, ChevronLeft } from 'lucide-react';
 
-export interface MeasurementItem {
-    id: string;
-    description: string;
-    unit: string;
-    price: number;
-    category: string;
-}
+import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumns, saveWorkbook } from '../utils/excelExport';
 
-interface SelectedAssetMeasurement {
-    asset: Asset;
-    items: string[]; // item IDs
-}
+const ASSET_TYPES = [
+    { id: 'totem', label: 'Totem', category: 'TOTEM' },
+    { id: 'abrigo_caos_leve', label: 'Caos Leve', category: 'ABRIGO DE ÔNIBUS CAOS LEVE' },
+    { id: 'abrigo_caos_top', label: 'Caos Top', category: 'ABRIGO DE ÔNIBUS CAOS TOP' },
+    { id: 'abrigo_minimalista_leve', label: 'Minimalista Leve', category: 'ABRIGO DE ÔNIBUS MINIMALISTA LEVE' },
+    { id: 'abrigo_minimalista_top', label: 'Minimalista Top', category: 'ABRIGO DE ÔNIBUS MINIMALISTA TOP' },
+    { id: 'abrigo_brutalista_leve', label: 'Brutalista Leve', category: 'ABRIGO DE ÔNIBUS BRUTALISTA LEVE' },
+    { id: 'abrigo_brutalista_top', label: 'Brutalista Top', category: 'ABRIGO DE ÔNIBUS BRUTALISTA TOP' },
+    { id: 'painel_digital', label: 'Painel Digital', category: 'INSTALAÇÃO PAINEL DIGITAL' },
+    { id: 'painel_estatico', label: 'Painel Estático', category: 'PAINEL ESTÁTICO' },
+    { id: 'poste', label: 'Poste', category: 'POSTE' }
+];
+
+const STAGES = [
+    { id: 'fundacao', label: 'Fundação', icon: <Building2 size={16} /> },
+    { id: 'implantacao', label: 'Implantação', icon: <Plus size={16} /> },
+    { id: 'montagem', label: 'Montagem', icon: <Calculator size={16} /> },
+    { id: 'eletrica', label: 'Elétrica', icon: <Check size={16} /> }
+];
 
 export const MeasurementView: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     const [assets, setAssets] = useState<Asset[]>([]);
     const [selectedCompany, setSelectedCompany] = useState<string>('gf1');
-    const [currentPriceList, setCurrentPriceList] = useState<MeasurementItem[]>([]);
-    const [selectedAssets, setSelectedAssets] = useState<SelectedAssetMeasurement[]>([]);
+    const [currentPriceList, setCurrentPriceList] = useState<any[]>([]);
+
+    // Wizard State
+    const [currentStep, setCurrentStep] = useState(1);
+    const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+    const [selectedAssetType, setSelectedAssetType] = useState<string | null>(null);
+    const [selectedStages, setSelectedStages] = useState<string[]>([]);
     const [assetEvidences, setAssetEvidences] = useState<Record<string, TaskEvidence[]>>({});
+
     const [searchQuery, setSearchQuery] = useState('');
-    const [activitySearch, setActivitySearch] = useState('');
     const [loading, setLoading] = useState(true);
-    const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
-    const [importing, setImporting] = useState(false);
-    const [importSuccess, setImportSuccess] = useState(false);
-    const [importCategory, setImportCategory] = useState<string>('all');
+    const [saving, setSaving] = useState(false);
+    const [saveSuccess, setSaveSuccess] = useState(false);
 
     useEffect(() => {
         loadAssets();
     }, []);
 
     useEffect(() => {
-        // Partners can only see their own company (case-insensitive check)
         const userCid = currentUser.companyId?.toLowerCase();
         if (userCid && userCid !== 'internal' && selectedCompany !== userCid) {
             setSelectedCompany(userCid);
@@ -57,15 +67,12 @@ export const MeasurementView: React.FC<{ currentUser: User }> = ({ currentUser }
         setCurrentPriceList(prices);
     };
 
-    useEffect(() => {
-        // Fetch evidence for newly added selected assets
-        selectedAssets.forEach(async (sa) => {
-            if (!assetEvidences[sa.asset.id]) {
-                const evidences = await getEvidenceByAssetId(sa.asset.id);
-                setAssetEvidences(prev => ({ ...prev, [sa.asset.id]: evidences }));
-            }
-        });
-    }, [selectedAssets]);
+    const fetchEvidence = async (assetId: string) => {
+        if (!assetEvidences[assetId]) {
+            const evidences = await getEvidenceByAssetId(assetId);
+            setAssetEvidences(prev => ({ ...prev, [assetId]: evidences }));
+        }
+    };
 
     const companies = useMemo(() => {
         const all = [
@@ -80,232 +87,175 @@ export const MeasurementView: React.FC<{ currentUser: User }> = ({ currentUser }
         return all;
     }, [currentUser.companyId]);
 
-    const isInternal = currentUser.companyId?.toLowerCase() === 'internal';
-    const canManagePrices = currentUser.role.includes('CHEFE') || currentUser.role.includes('LIDER');
-
     const filteredAssets = assets.filter(a =>
         a.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
         a.location.address.toLowerCase().includes(searchQuery.toLowerCase())
-    ).slice(0, 10);
+    ).slice(0, 5);
 
-    const handleAddAsset = (asset: Asset) => {
-        if (selectedAssets.some(sa => sa.asset.id === asset.id)) return;
-        setSelectedAssets(prev => [...prev, { asset, items: [] }]);
+    const handleSelectAsset = (asset: Asset) => {
+        setSelectedAsset(asset);
+        fetchEvidence(asset.id);
+        setCurrentStep(1);
     };
 
-    const handleRemoveAsset = (assetId: string) => {
-        setSelectedAssets(prev => prev.filter(sa => sa.asset.id !== assetId));
+    const toggleStage = (stageId: string) => {
+        setSelectedStages(prev =>
+            prev.includes(stageId) ? prev.filter(id => id !== stageId) : [...prev, stageId]
+        );
     };
 
-    const toggleItem = (assetId: string, itemId: string) => {
-        setSelectedAssets(prev => prev.map(sa => {
-            if (sa.asset.id === assetId) {
-                const newItems = sa.items.includes(itemId)
-                    ? sa.items.filter(id => id !== itemId)
-                    : [...sa.items, itemId];
-                return { ...sa, items: newItems };
-            }
-            return sa;
-        }));
-    };
+    const calculateTotal = () => {
+        if (!selectedAssetType) return 0;
 
-    const calculateAssetTotal = (sa: SelectedAssetMeasurement) => {
-        return sa.items.reduce((acc, itemId) => {
-            const item = currentPriceList.find(i => i.id === itemId);
-            return acc + (item?.price || 0);
+        const typeInfo = ASSET_TYPES.find(t => t.id === selectedAssetType);
+        return selectedStages.reduce((acc, stageId) => {
+            const stageLabel = STAGES.find(s => s.id === stageId)?.label;
+            // Match price where category is the asset type and description is the stage
+            const priceItem = currentPriceList.find(i =>
+                i.category === typeInfo?.category &&
+                i.description.toLowerCase() === stageLabel?.toLowerCase()
+            );
+            return acc + (priceItem?.price || 0);
         }, 0);
     };
 
-    const grandTotal = useMemo(() => {
-        return selectedAssets.reduce((acc, sa) => acc + calculateAssetTotal(sa), 0);
-    }, [selectedAssets, currentPriceList]);
+    const exportToExcel = async () => {
+        if (!selectedAsset || !selectedAssetType) return;
 
-    const exportToExcel = () => {
-        const data = selectedAssets.flatMap(sa => {
-            return sa.items.map(itemId => {
-                const item = currentPriceList.find(i => i.id === itemId);
-                return {
-                    'Empresa': companies.find(c => c.id === selectedCompany)?.name,
-                    'Código Abrigo': sa.asset.code,
-                    'Endereço': sa.asset.location.address,
-                    'Cidade': sa.asset.city,
-                    'ID Item': item?.id,
-                    'Atividade': item?.description,
-                    'Unidade': item?.unit,
-                    'Valor Unitário': item?.price,
-                    'Total': item?.price
-                };
-            });
+        const { workbook, worksheet, startRow } = await createEletromidiaWorkbook(
+            `Medição de Ativo - ${selectedAsset.code}`,
+            'Medição'
+        );
+
+        const headers = [
+            'Empresa', 'Código Ativo', 'Endereço', 'Cidade',
+            'Tipo de Ativo', 'Etapa', 'Descrição', 'Unidade',
+            'Valor Unitário', 'Total'
+        ];
+        const headerRow = worksheet.getRow(startRow);
+        headerRow.values = headers;
+        styleHeaderRow(headerRow);
+
+        const typeInfo = ASSET_TYPES.find(t => t.id === selectedAssetType);
+
+        selectedStages.forEach(sid => {
+            const stage = STAGES.find(s => s.id === sid);
+            const priceItem = currentPriceList.find(i =>
+                i.category === typeInfo?.category &&
+                i.description.toLowerCase() === stage?.label.toLowerCase()
+            );
+
+            worksheet.addRow([
+                companies.find(c => c.id === selectedCompany)?.name,
+                selectedAsset.code,
+                selectedAsset.location.address,
+                selectedAsset.city,
+                typeInfo?.label,
+                stage?.label,
+                stage?.label,
+                priceItem?.unit || 'UN',
+                priceItem?.price || 0,
+                priceItem?.price || 0
+            ]);
         });
 
-        const worksheet = XLSX.utils.json_to_sheet(data);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'Medição');
-        XLSX.writeFile(workbook, `Medicao_${new Date().toISOString().split('T')[0]}.xlsx`);
+        const totalRow = worksheet.addRow(['', '', '', '', '', '', '', '', 'TOTAL', calculateTotal()]);
+        totalRow.font = { bold: true };
+        totalRow.getCell(10).numFmt = '"R$ "#,##0.00';
+
+        styleDataRows(worksheet, startRow);
+        autoFitColumns(worksheet);
+
+        const fileName = `Medicao_${selectedAsset.code}_${new Date().toISOString().split('T')[0]}`;
+        await saveWorkbook(workbook, fileName);
     };
 
-    const handleImportPrices = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-
-        setImporting(true);
-        const reader = new FileReader();
-
-        reader.onload = async (e) => {
-            try {
-                const data = e.target?.result;
-                const workbook = XLSX.read(data, { type: 'binary' });
-                const sheetName = workbook.SheetNames[0];
-                const sheet = workbook.Sheets[sheetName];
-                const json = XLSX.utils.sheet_to_json(sheet) as any[];
-
-                if (!json || json.length === 0) {
-                    throw new Error('A planilha está vazia.');
-                }
-
-                // Helper to parse Brazilian currency strings or regular numbers
-                const parsePrice = (val: any): number => {
-                    if (typeof val === 'number') return val;
-                    if (!val) return 0;
-                    // Remove R$, spaces, and handle dots/commas
-                    const clean = String(val)
-                        .replace(/[R$\s]/g, '')
-                        .replace(/\./g, '')
-                        .replace(',', '.');
-                    return parseFloat(clean) || 0;
-                };
-
-                // Map JSON to MeasurementItem
-                let currentDetectedCategory = '';
-                const newPrices = json.map(row => {
-                    const price = parsePrice(row['PROPOSTA REVISADA'] || row.Preco || row.price || row.Valor || 0);
-                    const description = String(row.DESCRITIVO || row.Descritivo || row.Descricao || row.description || row.Atividade || '');
-
-                    // If price is 0, this might be a category header row
-                    if (price === 0 && description) {
-                        currentDetectedCategory = description.toUpperCase();
-                    }
-
-                    return {
-                        id: String(row.ITEM || row.Item || row.ID || row.id || ''),
-                        category: importCategory === 'all'
-                            ? (String(row.Categoria || row.category || row.CATEGORIA || '') || currentDetectedCategory)
-                            : (importCategory === 'abrigo' ? 'ABRIGO' : importCategory === 'totem' ? 'TOTEM' : 'DIGITAL'),
-                        description: description,
-                        unit: String(row.UM || row.Um || row.Unidade || row.unit || 'UN'),
-                        price: price
-                    };
-                }).filter(p => p.id && p.description && p.price > 0);
-
-                if (newPrices.length === 0) {
-                    throw new Error('Nenhum preço válido encontrado. Verifique os cabeçalhos das colunas.');
-                }
-
-                await bulkUpdateMeasurementPrices(selectedCompany, newPrices, importCategory);
-                setImportSuccess(true);
-                await loadPrices();
-                setTimeout(() => setImportSuccess(false), 3000);
-            } catch (error: any) {
-                console.error('Error importing prices:', error);
-                alert(`Erro ao importar preços: ${error.message || 'Verifique o formato do arquivo.'}`);
-            } finally {
-                setImporting(false);
-                event.target.value = '';
-            }
-        };
-
-        reader.onerror = () => {
-            alert('Erro ao ler o arquivo.');
-            setImporting(false);
-        };
-
-        reader.readAsBinaryString(file);
+    const handleSave = async () => {
+        if (!selectedAsset || !selectedAssetType) return;
+        setSaving(true);
+        try {
+            const typeInfo = ASSET_TYPES.find(t => t.id === selectedAssetType);
+            await saveAssetMeasurement({
+                assetId: selectedAsset.id,
+                technicianId: currentUser.id,
+                companyId: selectedCompany,
+                assetType: typeInfo?.category || selectedAssetType,
+                stages: selectedStages,
+                totalValue: calculateTotal()
+            });
+            setSaveSuccess(true);
+            setTimeout(() => {
+                setSaveSuccess(false);
+                setSelectedAsset(null);
+                setSelectedAssetType(null);
+                setSelectedStages([]);
+                setCurrentStep(1);
+            }, 3000);
+        } catch (error) {
+            console.error('Error saving measurement:', error);
+            alert('Erro ao salvar medição.');
+        } finally {
+            setSaving(false);
+        }
     };
 
-    const groupedPrices = useMemo(() => {
-        const filtered = activitySearch
-            ? currentPriceList.filter(i => i.description.toLowerCase().includes(activitySearch.toLowerCase()))
-            : currentPriceList;
+    const renderAssetPhoto = () => {
+        if (!selectedAsset) return null;
+        const evidences = assetEvidences[selectedAsset.id] || [];
+        const mainPhoto = evidences.find(ev => ev.stage === 'AFTER' || ev.stage === 'DURING' || ev.stage === 'BEFORE')?.photoUrl;
 
-        return filtered.reduce((acc, item) => {
-            if (!acc[item.category]) acc[item.category] = [];
-            acc[item.category].push(item);
-            return acc;
-        }, {} as Record<string, MeasurementItem[]>);
-    }, [currentPriceList, activitySearch]);
-
-    return (
-        <div className="flex flex-col gap-8 pb-20">
-            {/* Header & Company Selection */}
-            <div className="bg-white p-5 md:p-8 rounded-[32px] border border-slate-100 shadow-sm">
-                <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-6">
-                    <div className="flex items-center gap-4 shrink-0">
-                        <div className="p-3 bg-primary-50 text-primary rounded-2xl">
-                            <Calculator size={24} />
-                        </div>
-                        <div>
-                            <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Medição e Orçamento</h2>
-                            <p className="text-sm text-slate-400 font-medium">Calcule o custo das atividades por abrigo</p>
-                        </div>
+        return (
+            <div className="w-full h-48 md:h-64 bg-slate-100 rounded-3xl overflow-hidden relative">
+                {mainPhoto ? (
+                    <img src={mainPhoto} alt="Asset" className="w-full h-full object-cover" />
+                ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 gap-2">
+                        <ImageIcon size={48} />
+                        <span className="text-xs font-bold uppercase">Sem fotos registradas</span>
                     </div>
-
-                    <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 md:gap-4 w-full 2xl:w-auto flex-wrap 2xl:justify-end">
-                        {companies.length > 1 && (
-                            <div className="relative group w-full md:w-auto shrink-0">
-                                <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                <select
-                                    value={selectedCompany}
-                                    onChange={(e) => setSelectedCompany(e.target.value)}
-                                    className="w-full md:w-auto pl-12 pr-10 py-3 bg-slate-50 border-none rounded-2xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary/20 appearance-none cursor-pointer"
-                                >
-                                    {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                </select>
-                            </div>
-                        )}
-
-                        {canManagePrices && (
-                            <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 md:gap-4 lg:gap-2 shrink-0 flex-wrap">
-                                <div className="flex items-center gap-2 bg-slate-50 rounded-xl px-2 py-1 md:py-0 md:bg-transparent w-full md:w-auto shrink-0">
-                                    <Calculator size={16} className="text-slate-400 ml-2 md:ml-0" />
-                                    <select
-                                        value={importCategory}
-                                        onChange={(e) => setImportCategory(e.target.value)}
-                                        className="w-full md:w-auto bg-transparent md:bg-slate-50 border-none rounded-xl text-[10px] font-black uppercase tracking-widest px-2 md:px-4 py-3 focus:ring-2 focus:ring-primary/20 appearance-none cursor-pointer"
-                                    >
-                                        <option value="all">Sincronizar Tudo (Planilha Completa)</option>
-                                        <option value="abrigo">Apenas Abrigos</option>
-                                        <option value="totem">Apenas Totens</option>
-                                        <option value="digital">Apenas Digitais</option>
-                                    </select>
-                                </div>
-
-                                <label className={`flex items-center justify-center gap-2 px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all cursor-pointer whitespace-nowrap ${importSuccess ? 'bg-green-500 text-white' : 'bg-primary/10 text-primary hover:bg-primary/20'
-                                    }`}>
-                                    {importing ? <div className="w-4 h-4 border-2 border-primary border-t-transparent animate-spin rounded-full" /> : (importSuccess ? <Check size={18} /> : <Upload size={18} />)}
-                                    {importSuccess ? 'Importado!' : 'Importar Preços'}
-                                    <input type="file" accept=".xlsx, .xls" onChange={handleImportPrices} className="hidden" />
-                                </label>
-                            </div>
-                        )}
-
-                        <button
-                            onClick={exportToExcel}
-                            disabled={selectedAssets.length === 0}
-                            className="flex items-center justify-center gap-2 px-6 py-3 bg-secondary text-primary rounded-2xl text-xs font-black uppercase tracking-widest hover:scale-105 transition-all disabled:opacity-50 disabled:scale-100 whitespace-nowrap w-full md:w-auto shrink-0"
-                        >
-                            <Download size={18} />
-                            Exportar Planilha
-                        </button>
-                    </div>
+                )}
+                <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-4 py-2 rounded-xl shadow-sm border border-white">
+                    <p className="text-[10px] font-black text-slate-400 uppercase leading-none mb-1">Ponto Selecionado</p>
+                    <p className="text-sm font-black text-slate-900 uppercase">{selectedAsset.code}</p>
                 </div>
             </div>
+        );
+    };
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                {/* Left Side: Search and Selection */}
-                <div className="lg:col-span-4 flex flex-col gap-6">
-                    <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col gap-4">
-                        <h3 className="text-xs font-black text-primary uppercase tracking-[0.2em]">Buscar Abrigos</h3>
-                        <div className="relative">
+    return (
+        <div className="flex flex-col gap-6 pb-20">
+            {/* Header */}
+            <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-primary-50 text-primary rounded-2xl">
+                        <Calculator size={24} />
+                    </div>
+                    <div>
+                        <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Nova Medição</h2>
+                        <p className="text-sm text-slate-400 font-medium">Siga os 3 passos para registrar a atividade</p>
+                    </div>
+                </div>
+
+                {companies.length > 1 && (
+                    <div className="relative group">
+                        <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <select
+                            value={selectedCompany}
+                            onChange={(e) => setSelectedCompany(e.target.value)}
+                            className="pl-12 pr-10 py-3 bg-slate-50 border-none rounded-2xl text-sm font-bold text-slate-700 appearance-none cursor-pointer"
+                        >
+                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                    </div>
+                )}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Search Sidebar */}
+                <div className="lg:col-span-4 flex flex-col gap-4">
+                    <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm">
+                        <h3 className="text-xs font-black text-primary uppercase tracking-[0.2em] mb-4">Buscar Ponto</h3>
+                        <div className="relative mb-4">
                             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                             <input
                                 type="text"
@@ -315,175 +265,229 @@ export const MeasurementView: React.FC<{ currentUser: User }> = ({ currentUser }
                                 className="w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-2xl text-sm focus:ring-2 focus:ring-primary/20"
                             />
                         </div>
-
-                        <div className="flex flex-col gap-2 mt-2">
+                        <div className="flex flex-col gap-2">
                             {filteredAssets.map(asset => (
                                 <button
                                     key={asset.id}
-                                    onClick={() => handleAddAsset(asset)}
-                                    className="flex items-center justify-between p-4 rounded-2xl hover:bg-primary-50 transition-all text-left group"
+                                    onClick={() => handleSelectAsset(asset)}
+                                    className={`flex items-center justify-between p-4 rounded-2xl transition-all text-left ${selectedAsset?.id === asset.id ? 'bg-primary text-white shadow-lg' : 'hover:bg-slate-50'
+                                        }`}
                                 >
                                     <div>
-                                        <p className="font-black text-slate-900 text-sm uppercase">{asset.code}</p>
-                                        <p className="text-[10px] text-slate-400 font-medium truncate max-w-[200px]">{asset.location.address}</p>
+                                        <p className={`font-black text-sm uppercase ${selectedAsset?.id === asset.id ? 'text-white' : 'text-slate-900'}`}>{asset.code}</p>
+                                        <p className={`text-[10px] font-medium truncate max-w-[200px] ${selectedAsset?.id === asset.id ? 'text-white/70' : 'text-slate-400'}`}>{asset.location.address}</p>
                                     </div>
-                                    <div className="p-2 bg-white rounded-xl shadow-sm opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <Plus size={16} className="text-primary" />
-                                    </div>
+                                    {selectedAsset?.id === asset.id && <ChevronRight size={18} />}
                                 </button>
                             ))}
                         </div>
                     </div>
 
-                    {/* Grand Total Summary */}
-                    <div className="bg-primary p-6 md:p-8 rounded-3xl shadow-2xl shadow-primary/30 text-white flex flex-col gap-2">
-                        <p className="text-[10px] font-black uppercase tracking-[0.22em] opacity-80">Total Geral Acumulado</p>
-                        <p className="text-3xl md:text-4xl font-black tracking-tighter">
-                            {grandTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </p>
-                        <div className="mt-4 pt-4 border-t border-white/10 flex justify-between items-center">
-                            <span className="text-[10px] font-black uppercase tracking-widest opacity-60">Itens Selecionados</span>
-                            <span className="font-black">{selectedAssets.reduce((acc, sa) => acc + sa.items.length, 0)}</span>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Right Side: Selected Assets & Measurements */}
-                <div className="lg:col-span-8 flex flex-col gap-6">
-                    {/* Activity Filter Search */}
-                    {selectedAssets.length > 0 && (
-                        <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col gap-4">
-                            <h3 className="text-xs font-black text-primary uppercase tracking-[0.2em]">Filtrar Atividades (Geral)</h3>
-                            <div className="relative">
-                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                <input
-                                    type="text"
-                                    placeholder="Pesquisar atividade (ex: passagem de cabo pp)..."
-                                    value={activitySearch}
-                                    onChange={(e) => setActivitySearch(e.target.value)}
-                                    className="w-full pl-12 pr-4 py-4 bg-primary-50/30 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-primary/20"
-                                />
+                    {selectedAsset && (
+                        <div className="bg-primary p-6 md:p-8 rounded-[32px] shadow-2xl shadow-primary/30 text-white flex flex-col gap-2">
+                            <p className="text-[10px] font-black uppercase tracking-[0.22em] opacity-80">Total Calculado</p>
+                            <p className="text-3xl md:text-4xl font-black tracking-tighter">
+                                {calculateTotal().toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            </p>
+                            <div className="mt-4 flex gap-2">
+                                {STAGES.map(s => selectedStages.includes(s.id) && (
+                                    <div key={s.id} className="p-2 bg-white/10 rounded-lg" title={s.label}>
+                                        {s.icon}
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     )}
+                </div>
 
-                    {selectedAssets.length === 0 ? (
-                        <div className="bg-white border-2 border-dashed border-slate-100 rounded-[32px] p-20 flex flex-col items-center justify-center text-center gap-4">
+                {/* Wizard Area */}
+                <div className="lg:col-span-8">
+                    {!selectedAsset ? (
+                        <div className="bg-white border-2 border-dashed border-slate-100 rounded-[32px] p-20 flex flex-col items-center justify-center text-center gap-4 h-full">
                             <div className="p-6 bg-slate-50 text-slate-300 rounded-[32px]">
                                 <Calculator size={48} />
                             </div>
                             <div>
-                                <h3 className="text-lg font-black text-slate-900 uppercase">Nenhum abrigo selecionado</h3>
-                                <p className="text-sm text-slate-400 max-w-xs">Busque e adicione abrigos ao lado para começar a medição das atividades.</p>
+                                <h3 className="text-lg font-black text-slate-900 uppercase">Selecione um ponto</h3>
+                                <p className="text-sm text-slate-400 max-w-xs">Escolha um abrigo ou totem no buscador para iniciar a medição</p>
                             </div>
                         </div>
                     ) : (
-                        <div className="flex flex-col gap-6">
-                            {selectedAssets.map((sa) => (
-                                <div key={sa.asset.id} className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden flex flex-col">
-                                    {/* Asset Header */}
-                                    <div className="p-6 bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-50">
-                                        <div className="flex items-center gap-4">
-                                            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-primary shadow-sm">
-                                                <Building2 size={24} />
-                                            </div>
-                                            <div>
-                                                <h4 className="font-black text-slate-900 uppercase">{sa.asset.code}</h4>
-                                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{sa.asset.location.address}</p>
-                                            </div>
+                        <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden flex flex-col min-h-[600px]">
+                            {/* Wizard Progress bar */}
+                            <div className="px-8 pt-8 flex items-center justify-between mb-8">
+                                {[1, 2, 3].map(step => (
+                                    <div key={step} className="flex items-center flex-1 last:flex-none">
+                                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-sm font-black transition-all ${currentStep === step ? 'bg-primary text-white shadow-lg' :
+                                            currentStep > step ? 'bg-green-500 text-white' : 'bg-slate-100 text-slate-400'
+                                            }`}>
+                                            {currentStep > step ? <Check size={20} /> : step}
                                         </div>
-                                        <div className="flex items-center gap-6">
-                                            <div className="text-right">
-                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Total do Abrigo</p>
-                                                <p className="text-xl font-black text-primary">
-                                                    {calculateAssetTotal(sa).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                                </p>
-                                            </div>
-                                            <button
-                                                onClick={() => handleRemoveAsset(sa.asset.id)}
-                                                className="p-3 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all"
-                                            >
-                                                <Trash2 size={20} />
-                                            </button>
-                                        </div>
+                                        {step < 3 && <div className={`h-1 flex-1 mx-4 rounded-full transition-all ${currentStep > step ? 'bg-green-500' : 'bg-slate-100'}`} />}
                                     </div>
+                                ))}
+                            </div>
 
-                                    {/* Photos Section */}
-                                    <div className="p-6 border-b border-slate-50">
-                                        <div className="flex items-center gap-2 mb-4">
-                                            <ImageIcon size={16} className="text-primary" />
-                                            <h5 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Evidências Técnicas</h5>
-                                        </div>
-                                        <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
-                                            {assetEvidences[sa.asset.id]?.length === 0 && (
-                                                <p className="text-[10px] text-slate-400 font-bold uppercase">Nenhuma foto encontrada para este abrigo.</p>
-                                            )}
-                                            {assetEvidences[sa.asset.id]?.map((ev) => (
+                            <div className="px-8 pb-8 flex-1 flex flex-col">
+                                {currentStep === 1 && (
+                                    <div className="flex flex-col gap-6 animate-in slide-in-from-right duration-300">
+                                        <h4 className="text-xl font-black text-slate-900 uppercase">Qual o tipo de Ativo?</h4>
+                                        {renderAssetPhoto()}
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                            {ASSET_TYPES.map(type => (
                                                 <button
-                                                    key={ev.id}
-                                                    onClick={() => setSelectedPhoto(ev.photoUrl)}
-                                                    className="w-24 h-24 rounded-xl overflow-hidden shrink-0 border border-slate-100 hover:scale-105 transition-transform"
+                                                    key={type.id}
+                                                    onClick={() => setSelectedAssetType(type.id)}
+                                                    className={`p-4 rounded-2xl border-2 text-left transition-all ${selectedAssetType === type.id
+                                                        ? 'border-primary bg-primary/5 text-primary shadow-sm'
+                                                        : 'border-slate-50 hover:border-slate-200 text-slate-600'
+                                                        }`}
                                                 >
-                                                    <img src={ev.photoUrl} alt="Evidence" className="w-full h-full object-cover" />
+                                                    <p className="text-[10px] font-black uppercase tracking-widest">{type.label}</p>
                                                 </button>
                                             ))}
                                         </div>
                                     </div>
+                                )}
 
-                                    {/* Activity Selection */}
-                                    <div className="p-8">
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8">
-                                            {(Object.entries(groupedPrices) as [string, MeasurementItem[]][]).map(([category, items]) => (
-                                                <div key={category} className="flex flex-col gap-4">
-                                                    <h5 className="text-[10px] font-black text-primary uppercase tracking-[0.25em] mb-2">{category}</h5>
-                                                    <div className="flex flex-col gap-3">
-                                                        {items.map(item => (
-                                                            <button
-                                                                key={item.id}
-                                                                onClick={() => toggleItem(sa.asset.id, item.id)}
-                                                                className={`flex items-center justify-between p-4 rounded-2xl border transition-all text-left ${sa.items.includes(item.id)
-                                                                    ? 'bg-primary/5 border-primary shadow-sm'
-                                                                    : 'bg-white border-slate-100 hover:border-primary-100'
-                                                                    }`}
-                                                            >
-                                                                <div className="flex items-center gap-3">
-                                                                    <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all ${sa.items.includes(item.id)
-                                                                        ? 'bg-primary border-primary'
-                                                                        : 'border-slate-200'
-                                                                        }`}>
-                                                                        {sa.items.includes(item.id) && <CheckCircle2 size={12} className="text-white" />}
-                                                                    </div>
-                                                                    <div>
-                                                                        <p className={`text-xs font-black uppercase tracking-tight ${sa.items.includes(item.id) ? 'text-primary' : 'text-slate-600'}`}>{item.description}</p>
-                                                                        <p className="text-[9px] text-slate-400 font-bold">{item.unit} • {item.price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>
-                                                                    </div>
-                                                                </div>
-                                                            </button>
-                                                        ))}
+                                {currentStep === 2 && (
+                                    <div className="flex flex-col gap-6 animate-in slide-in-from-right duration-300">
+                                        <h4 className="text-xl font-black text-slate-900 uppercase">Etapas Realizadas</h4>
+                                        {renderAssetPhoto()}
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            {STAGES.map(stage => (
+                                                <button
+                                                    key={stage.id}
+                                                    onClick={() => toggleStage(stage.id)}
+                                                    className={`flex items-center gap-4 p-6 rounded-3xl border-2 transition-all ${selectedStages.includes(stage.id)
+                                                        ? 'border-primary bg-primary/5'
+                                                        : 'border-slate-50 hover:border-slate-200'
+                                                        }`}
+                                                >
+                                                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${selectedStages.includes(stage.id) ? 'bg-primary text-white' : 'bg-slate-100 text-slate-400'
+                                                        }`}>
+                                                        {stage.icon}
                                                     </div>
-                                                </div>
+                                                    <div className="flex-1 text-left">
+                                                        <p className="text-sm font-black text-slate-900 uppercase">{stage.label}</p>
+                                                        <p className="text-[10px] text-slate-400 font-bold uppercase">Medição Técnica</p>
+                                                    </div>
+                                                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${selectedStages.includes(stage.id) ? 'bg-primary border-primary' : 'border-slate-200'
+                                                        }`}>
+                                                        {selectedStages.includes(stage.id) && <Check size={14} className="text-white" />}
+                                                    </div>
+                                                </button>
                                             ))}
                                         </div>
                                     </div>
+                                )}
+
+                                {currentStep === 3 && (
+                                    <div className="flex flex-col gap-6 animate-in slide-in-from-right duration-300">
+                                        <h4 className="text-xl font-black text-slate-900 uppercase">Resumo e Finalização</h4>
+                                        <div className="bg-slate-50 rounded-3xl p-8 flex flex-col gap-6">
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ativo Selecionado</p>
+                                                    <p className="text-lg font-black text-slate-900 uppercase">{selectedAsset.code}</p>
+                                                    <p className="text-xs text-slate-400">{selectedAsset.location.address}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Tipo Identificado</p>
+                                                    <p className="text-lg font-black text-primary uppercase">
+                                                        {ASSET_TYPES.find(t => t.id === selectedAssetType)?.label || 'Não definido'}
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            <div className="h-px bg-slate-200" />
+
+                                            <div>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Detalhamento das Etapas</p>
+                                                <div className="flex flex-col gap-2">
+                                                    {selectedStages.map(sid => {
+                                                        const stage = STAGES.find(s => s.id === sid);
+                                                        const typeInfo = ASSET_TYPES.find(t => t.id === selectedAssetType);
+                                                        const price = currentPriceList.find(i =>
+                                                            i.category === typeInfo?.category &&
+                                                            i.description.toLowerCase() === stage?.label.toLowerCase()
+                                                        )?.price || 0;
+
+                                                        return (
+                                                            <div key={sid} className="flex justify-between items-center text-sm">
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-2 h-2 rounded-full bg-green-500" />
+                                                                    <span className="font-bold text-slate-700 uppercase">{stage?.label}</span>
+                                                                </div>
+                                                                <span className="font-black text-slate-900">
+                                                                    {price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    {selectedStages.length === 0 && (
+                                                        <p className="text-xs text-red-500 font-bold uppercase">Nenhuma etapa selecionada</p>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="h-px bg-slate-200" />
+
+                                            <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                                                <span className="text-sm font-black text-slate-400 uppercase tracking-widest">Valor Final</span>
+                                                <span className="text-2xl font-black text-primary">
+                                                    {calculateTotal().toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="mt-12 flex items-center justify-between">
+                                    <button
+                                        onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
+                                        disabled={currentStep === 1 || saving}
+                                        className="flex items-center gap-2 px-8 py-4 text-slate-400 font-black uppercase tracking-widest hover:text-primary transition-all disabled:opacity-30"
+                                    >
+                                        <ChevronLeft size={20} />
+                                        Anterior
+                                    </button>
+
+                                    {currentStep < 3 ? (
+                                        <button
+                                            onClick={() => setCurrentStep(prev => prev + 1)}
+                                            disabled={currentStep === 1 && !selectedAssetType}
+                                            className="flex items-center gap-2 px-10 py-5 bg-primary text-white rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-primary/20 hover:scale-105 transition-all disabled:opacity-50 disabled:scale-100"
+                                        >
+                                            Próximo Passo
+                                            <ChevronRight size={20} />
+                                        </button>
+                                    ) : (
+                                        <div className="flex gap-4">
+                                            <button
+                                                onClick={exportToExcel}
+                                                className="flex items-center gap-3 px-8 py-5 bg-secondary text-primary rounded-2xl font-black uppercase tracking-widest hover:scale-105 transition-all"
+                                            >
+                                                <Download size={22} />
+                                                Planilha
+                                            </button>
+                                            <button
+                                                onClick={handleSave}
+                                                disabled={saving || saveSuccess || selectedStages.length === 0}
+                                                className={`flex items-center gap-3 px-10 py-5 rounded-2xl font-black uppercase tracking-widest shadow-xl transition-all ${saveSuccess ? 'bg-green-500 text-white shadow-green-200' : 'bg-primary text-white shadow-primary/20 hover:scale-105'
+                                                    }`}
+                                            >
+                                                {saving ? <div className="w-5 h-5 border-2 border-white border-t-transparent animate-spin rounded-full" /> : (saveSuccess ? <Check size={22} /> : <Save size={22} />)}
+                                                {saveSuccess ? 'Medição Salva!' : 'Finalizar e Salvar'}
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
-                            ))}
+                            </div>
                         </div>
                     )}
                 </div>
             </div>
-
-            {/* Photo Modal */}
-            {selectedPhoto && (
-                <div
-                    className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-                    onClick={() => setSelectedPhoto(null)}
-                >
-                    <button className="absolute top-8 right-8 text-white hover:text-primary transition-colors">
-                        <X size={32} />
-                    </button>
-                    <img src={selectedPhoto} alt="Evidence Full" className="max-w-full max-h-full rounded-3xl shadow-2xl" />
-                </div>
-            )}
         </div>
     );
 };

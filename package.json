@@ -14,6 +14,7 @@
   "dependencies": {
     "@react-google-maps/api": "^2.20.8",
     "@supabase/supabase-js": "^2.90.1",
+    "exceljs": "^4.4.0",
     "idb": "^8.0.3",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
@@ -30,6 +31,7 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "@vitest/coverage-v8": "^4.0.17",
+    "docx": "^9.5.1",
     "jsdom": "^27.4.0",
     "msw": "^2.12.7",
     "typescript": "~5.8.2",

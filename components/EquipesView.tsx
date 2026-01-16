@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Team, User, UserRole } from '../types';
-import { Users, ShieldCheck, Mail, Phone, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Users, ShieldCheck, Mail, Phone, Plus, Pencil, Trash2, Search } from 'lucide-react';
 import SimpleModal from './SimpleModal';
 
 interface Props {
@@ -18,10 +18,16 @@ const EquipesView: React.FC<Props> = ({ teams, users, onCreateTeam, onDeleteTeam
   const [newTeamName, setNewTeamName] = useState('');
   const [selectedLeader, setSelectedLeader] = useState('');
   const [selectedTechs, setSelectedTechs] = useState<string[]>([]);
+  const [techSearchTerm, setTechSearchTerm] = useState('');
 
   // Filter eligible leaders and technicians based on roles
   const eligibleLeaders = users.filter(u => u.role === UserRole.LIDER || u.role === UserRole.PARCEIRO_LIDER);
-  const eligibleTechs = users.filter(u => u.role === UserRole.TECNICO || u.role === UserRole.PARCEIRO_TECNICO);
+  const eligibleTechs = users.filter(u => {
+    const isTech = u.role === UserRole.TECNICO || u.role === UserRole.PARCEIRO_TECNICO;
+    const matchesSearch = u.name.toLowerCase().includes(techSearchTerm.toLowerCase()) ||
+      (u.companyName?.toLowerCase().includes(techSearchTerm.toLowerCase()));
+    return isTech && matchesSearch;
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,6 +63,7 @@ const EquipesView: React.FC<Props> = ({ teams, users, onCreateTeam, onDeleteTeam
       setNewTeamName('');
       setSelectedLeader('');
       setSelectedTechs([]);
+      setTechSearchTerm('');
     }
     setIsModalOpen(true);
   };
@@ -67,6 +74,7 @@ const EquipesView: React.FC<Props> = ({ teams, users, onCreateTeam, onDeleteTeam
     setNewTeamName('');
     setSelectedLeader('');
     setSelectedTechs([]);
+    setTechSearchTerm('');
   };
 
   const handleDelete = (teamId: string, teamName: string) => {
@@ -194,7 +202,19 @@ const EquipesView: React.FC<Props> = ({ teams, users, onCreateTeam, onDeleteTeam
           </div>
 
           <div>
-            <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Selecionar Técnicos</label>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-xs font-black text-slate-500 uppercase tracking-widest">Selecionar Técnicos</label>
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={techSearchTerm}
+                  onChange={e => setTechSearchTerm(e.target.value)}
+                  placeholder="Pesquisar técnico..."
+                  className="pl-8 pr-3 py-1.5 bg-slate-100 border-none rounded-lg text-[10px] font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/20 w-40"
+                />
+              </div>
+            </div>
             <div className="max-h-48 overflow-y-auto space-y-2 border border-slate-200 rounded-xl p-2 bg-slate-50">
               {eligibleTechs.map(tech => (
                 <div

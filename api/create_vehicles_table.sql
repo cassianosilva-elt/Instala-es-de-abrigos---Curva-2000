@@ -4,6 +4,7 @@
 -- 1. CREATE VEHICLES TABLE (FLEET)
 CREATE TABLE IF NOT EXISTS vehicles (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  tag TEXT,
   model TEXT NOT NULL,
   plate TEXT NOT NULL UNIQUE,
   company_id TEXT NOT NULL,

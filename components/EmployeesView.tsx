@@ -3,7 +3,7 @@ import { User, Employee, UserRole, Absence } from '../types';
 import { getEmployees, bulkCreateEmployees, deleteEmployeeInvite, createAbsence, getAbsences, bulkDeleteInvites, uploadAbsenceEvidence } from '../api/fieldManagerApi';
 import { Users, Upload, Search, Download, Trash2, Mail, CheckCircle2, Clock, AlertCircle, CalendarOff, Plus, ChevronUp, ChevronDown, Filter, Eye, FileText } from 'lucide-react';
 import readXlsxFile from 'read-excel-file';
-import * as XLSX from 'xlsx';
+import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumns, saveWorkbook } from '../utils/excelExport';
 
 interface EmployeesViewProps {
     currentUser: User;
@@ -187,7 +187,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
         document.body.removeChild(link);
     };
 
-    const handleExportAbsences = () => {
+    const handleExportAbsences = async () => {
         const filteredAbsences = absences.filter(a => {
             const date = new Date(a.date);
             return (date.getMonth() + 1) === reportMonth && date.getFullYear() === reportYear;
@@ -198,39 +198,43 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
             return;
         }
 
-        // Prepare data for Excel
-        const data = filteredAbsences.map(a => {
+        const monthName = new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2000, reportMonth - 1));
+        const { workbook, worksheet, startRow } = await createEletromidiaWorkbook(
+            `Relatório de Ausências - ${monthName} / ${reportYear}`,
+            'Ausências'
+        );
+
+        // Header row
+        const headers = [
+            'Data', 'Funcionário', 'Matrícula/ID', 'Cargo', 'Turno',
+            'Líder', 'Motivo', 'Observação', 'Possui Comprovante', 'URL Comprovante'
+        ];
+        const headerRow = worksheet.getRow(startRow);
+        headerRow.values = headers;
+        styleHeaderRow(headerRow);
+
+        // Data rows
+        filteredAbsences.forEach(a => {
             const employee = employees.find(e => e.id === a.employeeId);
-            return {
-                'Data': new Date(a.date).toLocaleDateString('pt-BR'),
-                'Funcionário': a.employeeName,
-                'Matrícula/ID': employee?.code || '-',
-                'Cargo': employee?.role.replace('PARCEIRO_', '').replace('_', ' ') || '-',
-                'Turno': employee?.shift || '-',
-                'Líder': employee?.leaderName || '-',
-                'Motivo': a.reason,
-                'Observação': a.description || '-',
-                'Possui Comprovante': a.evidenceUrl ? 'SIM' : 'NÃO',
-                'URL Comprovante': a.evidenceUrl || '-'
-            };
+            worksheet.addRow([
+                new Date(a.date).toLocaleDateString('pt-BR'),
+                a.employeeName,
+                employee?.code || '-',
+                employee?.role.replace('PARCEIRO_', '').replace('_', ' ') || '-',
+                employee?.shift || '-',
+                employee?.leaderName || '-',
+                a.reason,
+                a.description || '-',
+                a.evidenceUrl ? 'SIM' : 'NÃO',
+                a.evidenceUrl || '-'
+            ]);
         });
 
-        const worksheet = XLSX.utils.json_to_sheet(data);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Ausências");
+        styleDataRows(worksheet, startRow);
+        autoFitColumns(worksheet);
 
-        // Format column widths
-        const wscols = [
-            { wch: 12 }, { wch: 30 }, { wch: 15 }, { wch: 20 },
-            { wch: 10 }, { wch: 20 }, { wch: 20 }, { wch: 30 },
-            { wch: 15 }, { wch: 40 }
-        ];
-        worksheet['!cols'] = wscols;
-
-        const monthName = new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(new Date(2000, reportMonth - 1));
-        const fileName = `Relatorio_Ausencias_${monthName}_${reportYear}.xlsx`;
-
-        XLSX.writeFile(workbook, fileName);
+        const fileName = `Relatorio_Ausencias_${monthName}_${reportYear}`;
+        await saveWorkbook(workbook, fileName);
         setIsReportModalOpen(false);
     };
 

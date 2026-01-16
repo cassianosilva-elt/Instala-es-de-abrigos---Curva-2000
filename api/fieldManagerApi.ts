@@ -1,5 +1,5 @@
 
-import { Task, TaskStatus, EvidenceStage, UserRole, TaskEvidence, ChatMessage, User, Team, ServiceType, Asset, AssetType, Employee, Absence, VehicleLog, Vehicle, OpecItem, OpecDevice, AuditLog } from '../types';
+import { Task, TaskStatus, EvidenceStage, UserRole, TaskEvidence, ChatMessage, User, Team, ServiceType, Asset, AssetType, Employee, Absence, VehicleLog, Vehicle, OpecItem, OpecDevice, AuditLog, DailyReport, DailyActivity, AssetMeasurement } from '../types';
 import { supabase } from './supabaseClient';
 
 // --- TASKS ---
@@ -127,6 +127,31 @@ export const createTask = async (task: Omit<Task, 'id'>): Promise<Task> => {
         description: data.description,
         evidence: []
     };
+};
+
+export const deleteTask = async (taskId: string): Promise<void> => {
+    const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', taskId);
+
+    if (error) throw error;
+};
+
+export const bulkDeleteTasks = async (taskIds: string[]): Promise<void> => {
+    const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .in('id', taskIds);
+
+    if (error) throw error;
+};
+
+export const bulkCreateTasks = async (tasks: any[]): Promise<void> => {
+    const { error } = await supabase
+        .from('tasks')
+        .insert(tasks);
+    if (error) throw error;
 };
 
 // --- EVIDENCE ---
@@ -498,6 +523,7 @@ export const getAssets = async (companyId?: string): Promise<Asset[]> => {
         code: a.code,
         type: a.type as AssetType,
         city: a.city,
+        companyId: a.company_id,
         location: {
             lat: a.lat,
             lng: a.lng,
@@ -577,8 +603,14 @@ export const bulkUpdateMeasurementPrices = async (companyId: string, prices: any
     let deleteQuery = supabase.from('measurement_prices').delete().eq('company_id', companyId);
 
     if (category && category !== 'all') {
-        const catMap: Record<string, string> = { 'abrigo': 'ABRIGO', 'totem': 'TOTEM', 'digital': 'DIGITAL' };
-        deleteQuery = deleteQuery.eq('category', catMap[category] || category);
+        const catMap: Record<string, string> = {
+            'totem': 'TOTEM',
+            'abrigo_caos': 'ABRIGO DE ÔNIBUS CAOS LEVE',
+            'abrigo_minimalista': 'ABRIGO DE ÔNIBUS MINIMALISTA LEVE',
+            'preventiva': 'MANUTENÇÃO PREVENTIVA',
+            'digital': 'INSTALAÇÃO PAINEL DIGITAL'
+        };
+        deleteQuery = deleteQuery.eq('category', catMap[category as keyof typeof catMap] || category);
     }
 
     const { error: deleteError } = await deleteQuery;
@@ -806,6 +838,7 @@ export const getVehicles = async (companyId: string): Promise<Vehicle[]> => {
     if (error) return [];
     return data.map(v => ({
         id: v.id,
+        tag: v.tag,
         model: v.model,
         plate: v.plate,
         companyId: v.company_id,
@@ -819,6 +852,7 @@ export const getVehicles = async (companyId: string): Promise<Vehicle[]> => {
 
 export const createVehicle = async (vehicle: Omit<Vehicle, 'id' | 'createdAt'>): Promise<void> => {
     const { error } = await supabase.from('vehicles').insert({
+        tag: vehicle.tag,
         model: vehicle.model,
         plate: vehicle.plate.toUpperCase(),
         company_id: vehicle.companyId,
@@ -832,6 +866,7 @@ export const createVehicle = async (vehicle: Omit<Vehicle, 'id' | 'createdAt'>):
 
 export const updateVehicle = async (id: string, updates: Partial<Vehicle>): Promise<void> => {
     const dbUpdates: any = {};
+    if (updates.tag !== undefined) dbUpdates.tag = updates.tag;
     if (updates.model) dbUpdates.model = updates.model;
     if (updates.plate) dbUpdates.plate = updates.plate.toUpperCase();
     if (updates.currentKm !== undefined) dbUpdates.current_km = updates.currentKm;
@@ -845,6 +880,28 @@ export const updateVehicle = async (id: string, updates: Partial<Vehicle>): Prom
 
 export const deleteVehicle = async (id: string): Promise<void> => {
     const { error } = await supabase.from('vehicles').delete().eq('id', id);
+    if (error) throw error;
+};
+
+export const bulkDeleteVehicles = async (ids: string[]): Promise<void> => {
+    const { error } = await supabase.from('vehicles').delete().in('id', ids);
+    if (error) throw error;
+};
+
+export const bulkUpsertVehicles = async (vehicles: any[]): Promise<void> => {
+    const { error } = await supabase.from('vehicles').upsert(
+        vehicles.map(v => ({
+            tag: v.tag,
+            model: v.model,
+            plate: v.plate.toUpperCase(),
+            company_id: v.companyId,
+            current_km: v.currentKm,
+            last_maintenance_km: v.lastMaintenanceKm,
+            status: v.status,
+            maintenance_notes: v.maintenanceNotes
+        })),
+        { onConflict: 'plate' }
+    );
     if (error) throw error;
 };
 
@@ -1021,4 +1078,164 @@ export const getAuditLogs = async (tableName: string, recordId: string): Promise
         createdAt: new Date(l.created_at),
         userName: 'Sistema/Desconhecido'
     }));
+};
+
+// --- DAILY REPORTS ---
+
+export const getDailyReports = async (companyId: string, teamId?: string): Promise<DailyReport[]> => {
+    let query = supabase.from('daily_reports').select('*, daily_activities(*)').order('date', { ascending: false });
+
+    if (companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+
+    if (teamId) {
+        query = query.eq('team_id', teamId);
+    }
+
+    const { data, error } = await query;
+    if (error) return [];
+
+    return data.map(r => ({
+        id: r.id,
+        date: r.date,
+        userId: r.user_id,
+        teamId: r.team_id,
+        technicianIds: r.technician_ids,
+        carPlate: r.car_plate,
+        opecId: r.opec_id,
+        notes: r.notes,
+        companyId: r.company_id,
+        activities: r.daily_activities.map((a: any) => ({
+            id: a.id,
+            activityType: a.activity_type,
+            quantity: a.quantity,
+            assetCodes: a.asset_codes
+        }))
+    }));
+};
+
+export const getDailyReportByTeamAndDate = async (teamId: string | null, date: string, technicianIds?: string[]): Promise<DailyReport | null> => {
+    let query = supabase
+        .from('daily_reports')
+        .select('*, daily_activities(*)')
+        .eq('date', date);
+
+    if (teamId) {
+        query = query.eq('team_id', teamId);
+    } else {
+        // If no team is selected, we are looking for the "ad-hoc" report for the day, 
+        // which is characterized by having team_id IS NULL.
+        // We do NOT filter by technicianIds here because we want to append any new activity
+        // to the existing daily report for the company/day.
+        query = query.is('team_id', null);
+    }
+
+    const { data, error } = await query.maybeSingle();
+
+    if (error || !data) return null;
+
+    return {
+        id: data.id,
+        date: data.date,
+        userId: data.user_id,
+        teamId: data.team_id,
+        technicianIds: data.technician_ids,
+        carPlate: data.car_plate,
+        opecId: data.opec_id,
+        notes: data.notes,
+        companyId: data.company_id,
+        activities: data.daily_activities.map((a: any) => ({
+            id: a.id,
+            activityType: a.activity_type,
+            quantity: a.quantity,
+            assetCodes: a.asset_codes,
+            technicianIds: a.technician_ids
+        }))
+    };
+};
+
+export const upsertDailyReport = async (report: Omit<DailyReport, 'id'>, id?: string): Promise<void> => {
+    const reportData = {
+        date: report.date,
+        user_id: report.userId,
+        team_id: report.teamId,
+        technician_ids: report.technicianIds,
+        car_plate: report.carPlate,
+        opec_id: report.opecId,
+        notes: report.notes,
+        company_id: report.companyId
+    };
+
+    let reportId = id;
+
+    if (id) {
+        const { error } = await supabase.from('daily_reports').update(reportData).eq('id', id);
+        if (error) throw error;
+    } else {
+        const { data, error } = await supabase.from('daily_reports').insert(reportData).select('id').single();
+        if (error) {
+            // Check for Unique Violation (duplicate key) - likely race condition or state mismatch
+            if (error.code === '23505' || error.message.includes('duplicate key') || (error as any).status === 409) {
+                // Try to find the existing report ID
+                let query = supabase.from('daily_reports').select('id').eq('date', report.date);
+                if (report.teamId) {
+                    query = query.eq('team_id', report.teamId);
+                } else {
+                    query = query.is('team_id', null);
+                }
+                const { data: existingData, error: fetchError } = await query.maybeSingle();
+
+                if (!fetchError && existingData) {
+                    reportId = existingData.id;
+                    // Retry as update
+                    const { error: updateError } = await supabase.from('daily_reports').update(reportData).eq('id', reportId);
+                    if (updateError) throw updateError;
+                } else {
+                    throw error; // If we can't find it, rethrow original error
+                }
+            } else {
+                throw error;
+            }
+        } else {
+            reportId = data.id;
+        }
+    }
+
+    // Handle activities (delete and re-insert for simplicity in upsert)
+    if (reportId) {
+        const { error: deleteError } = await supabase.from('daily_activities').delete().eq('report_id', reportId);
+        if (deleteError) throw deleteError;
+
+        if (report.activities.length > 0) {
+            const activitiesData = report.activities.map(a => ({
+                report_id: reportId,
+                activity_type: a.activityType,
+                quantity: a.quantity,
+                asset_codes: a.assetCodes,
+                technician_ids: a.technicianIds
+            }));
+            const { error: insertError } = await supabase.from('daily_activities').insert(activitiesData);
+            if (insertError) throw insertError;
+        }
+    }
+};
+
+
+export const deleteAbsence = async (id: string): Promise<void> => {
+    const { error } = await supabase.from('employee_absences').delete().eq('id', id);
+    if (error) throw error;
+};
+
+export const saveAssetMeasurement = async (measurement: AssetMeasurement): Promise<void> => {
+    const { error } = await supabase.from('asset_measurements').insert({
+        asset_id: measurement.assetId,
+        technician_id: measurement.technicianId,
+        company_id: measurement.companyId,
+        asset_type: measurement.assetType,
+        stages: measurement.stages,
+        total_value: measurement.totalValue
+    });
+
+    if (error) throw error;
 };

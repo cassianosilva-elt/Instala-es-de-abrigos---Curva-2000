@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Task, TaskStatus, User, UserRole } from '../types';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, PieChart, Pie } from 'recharts';
-import { FileSpreadsheet, TrendingUp, Users, Activity, Download, Calendar, Filter, Building2, ChevronDown } from 'lucide-react';
+import { FileSpreadsheet, TrendingUp, Users, Activity, Download, Calendar, Filter, Building2, ChevronDown, CheckCircle2, AlertCircle } from 'lucide-react';
+import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumns, saveWorkbook } from '../utils/excelExport';
 
 interface Props {
     tasks: Task[];
@@ -79,25 +80,36 @@ export const ReportsView: React.FC<Props> = ({ tasks, users, currentUser }) => {
             .slice(0, 5);
     }, [filteredTasks, users]);
 
-    const handleExportFullReport = () => {
-        const headers = ['Data', 'Ativo', 'Tipo', 'Servico', 'Status', 'Tecnico', 'Empresa'];
-        const csvRows = filteredTasks.map(t => [
-            t.scheduledDate,
-            t.assetId,
-            t.asset?.type || '',
-            t.serviceType,
-            t.status,
-            users.find(u => u.id === t.technicianId)?.name || '---',
-            t.companyId
-        ]);
+    const handleExportFullReport = async () => {
+        const { workbook, worksheet, startRow } = await createEletromidiaWorkbook(
+            `Relatório Consolidado - ${selectedMonth}`,
+            'Relatório'
+        );
 
-        const content = [headers, ...csvRows].map(r => r.join(';')).join('\n');
-        const blob = new Blob(["\ufeff" + content], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `Relatorio_Consolidado_${selectedMonth}.csv`;
-        link.click();
+        // Header row
+        const headers = ['Data', 'Ativo', 'Tipo', 'Serviço', 'Status', 'Técnico', 'Empresa'];
+        const headerRow = worksheet.getRow(startRow);
+        headerRow.values = headers;
+        styleHeaderRow(headerRow);
+
+        // Data rows
+        filteredTasks.forEach(t => {
+            worksheet.addRow([
+                t.scheduledDate,
+                t.assetId,
+                t.asset?.type || '',
+                t.serviceType,
+                t.status,
+                users.find(u => u.id === t.technicianId)?.name || '---',
+                t.companyId === 'internal' ? 'Eletromidia' : t.companyId.toUpperCase()
+            ]);
+        });
+
+        styleDataRows(worksheet, startRow);
+        autoFitColumns(worksheet);
+
+        const fileName = `Relatorio_Consolidado_${selectedMonth}`;
+        await saveWorkbook(workbook, fileName);
     };
 
     return (
@@ -137,7 +149,7 @@ export const ReportsView: React.FC<Props> = ({ tasks, users, currentUser }) => {
                         className="flex items-center gap-2 bg-primary text-white px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:scale-105 transition-all shadow-lg shadow-primary/20"
                     >
                         <FileSpreadsheet size={18} />
-                        Exportar CSV
+                        Exportar Excel
                     </button>
                 </div>
             </div>
@@ -145,9 +157,9 @@ export const ReportsView: React.FC<Props> = ({ tasks, users, currentUser }) => {
             {/* KPIs Principais */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <KPICard label="Volume Total" value={stats.total} icon={<Activity className="text-blue-500" />} color="blue" />
-                <KPICard label="Concluídas" value={stats.completed} icon={<CheckCircle size={20} className="text-green-500" />} color="green" />
+                <KPICard label="Concluídas" value={stats.completed} icon={<CheckCircleIcon size={20} className="text-green-500" />} color="green" />
                 <KPICard label="SLA Global" value={`${stats.sla.toFixed(1)}%`} icon={<TrendingUp className="text-primary" />} color="orange" />
-                <KPICard label="Bloqueios" value={stats.blocked} icon={<AlertCircle size={20} className="text-red-500" />} color="red" />
+                <KPICard label="Bloqueios" value={stats.blocked} icon={<AlertCircleIcon size={20} className="text-red-500" />} color="red" />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -227,10 +239,10 @@ const KPICard = ({ label, value, icon, color }: { label: string, value: string |
     );
 };
 
-const AlertCircle = ({ size, className }: { size: number, className: string }) => (
-    <Activity size={size} className={className} /> // Fallback placeholder
+const AlertCircleIcon = ({ size, className }: { size: number, className: string }) => (
+    <AlertCircle size={size} className={className} />
 );
 
-const CheckCircle = ({ size, className }: { size: number, className: string }) => (
-    <Activity size={size} className={className} /> // Fallback placeholder
+const CheckCircleIcon = ({ size, className }: { size: number, className: string }) => (
+    <CheckCircle2 size={size} className={className} />
 );

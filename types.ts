@@ -89,6 +89,7 @@ export interface Team {
 
 export interface Vehicle {
   id: string;
+  tag?: string;
   model: string;
   plate: string;
   companyId: string;
@@ -127,6 +128,7 @@ export interface Asset {
   type: AssetType;
   location: Location;
   city: string;
+  companyId?: string;
 }
 
 export interface TaskEvidence {
@@ -227,4 +229,38 @@ export interface OpecDevice {
   observations?: string;
   companyId: string;
   createdAt: string;
+}
+
+export interface DailyActivity {
+  id?: string;
+  activityType: string;
+  quantity: number;
+  assetCodes?: string[];
+  technicianIds?: string[]; // IDs of technicians who performed this specific activity
+}
+
+
+export interface DailyReport {
+  id: string;
+  date: string;
+  userId: string;
+  teamId?: string;
+  technicianIds?: string[]; // IDs of the "main" team/group for the day (optional now)
+  carPlate?: string;
+  opecId?: string;
+  notes?: string;
+  companyId: string;
+  activities: DailyActivity[];
+  absences?: Absence[];
+}
+
+export interface AssetMeasurement {
+  id?: string;
+  assetId: string;
+  technicianId: string;
+  companyId: string;
+  assetType: string;
+  stages: string[];
+  totalValue: number;
+  createdAt?: string;
 }

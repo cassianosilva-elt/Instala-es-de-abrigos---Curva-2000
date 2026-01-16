@@ -1,10 +1,11 @@
 
 import React, { useState, useMemo } from 'react';
 import { Task, TaskStatus, User, UserRole, AssetType, ServiceType, AuditLog } from '../types';
-import { ClipboardList, Search, Filter, AlertCircle, CheckCircle, Clock, MapPin, Plus, Box, History, X, ChevronRight } from 'lucide-react';
+import { ClipboardList, Search, Filter, AlertCircle, CheckCircle, Clock, MapPin, Plus, Box, History, X, ChevronRight, FileSpreadsheet, Trash2, CheckSquare, Square } from 'lucide-react';
 import SimpleModal from './SimpleModal';
 import SearchableSelect from './SearchableSelect';
-import { getAssets, getAuditLogs, getEvidenceByTaskId } from '../api/fieldManagerApi';
+import TaskImportModal from './TaskImportModal';
+import { getAssets, getAuditLogs, getEvidenceByTaskId, deleteTask, bulkDeleteTasks } from '../api/fieldManagerApi';
 
 interface Props {
     tasks: Task[];
@@ -20,6 +21,9 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [assets, setAssets] = useState<any[]>([]);
     const [isAssetLoading, setIsAssetLoading] = useState(false);
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+    const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+    const [isSelectionMode, setIsSelectionMode] = useState(false);
 
     // Detailed View State
     const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -114,6 +118,55 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
         }
     };
 
+    const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (window.confirm('Tem certeza que deseja excluir esta Ordem de Serviço?')) {
+            try {
+                await deleteTask(taskId);
+                // The parent component should refresh the tasks list
+                // For now, we rely on the parent updating via props if possible, 
+                // or we can force a local update if tasks were in local state.
+                // Since 'tasks' comes from props, we need a way to notify the parent.
+                // Assuming onUpdateTask can be used or a new onDeleteTask prop is needed.
+                // Let's assume the user wants the OS to disappear.
+                window.location.reload(); // Simple way to refresh for now if no onDelete prop
+            } catch (err) {
+                console.error('Erro ao excluir OS:', err);
+                alert('Erro ao excluir a Ordem de Serviço.');
+            }
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedTaskIds.size === 0) return;
+
+        if (window.confirm(`Tem certeza que deseja excluir ${selectedTaskIds.size} Ordens de Serviço selecionadas?`)) {
+            try {
+                await bulkDeleteTasks(Array.from(selectedTaskIds));
+                window.location.reload();
+            } catch (err) {
+                console.error('Erro ao excluir OS em lote:', err);
+                alert('Erro ao excluir as Ordens de Serviço selecionadas.');
+            }
+        }
+    };
+
+    const toggleSelectTask = (taskId: string, e: React.MouseEvent) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        const next = new Set(selectedTaskIds);
+        if (next.has(taskId)) next.delete(taskId);
+        else next.add(taskId);
+        setSelectedTaskIds(next);
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedTaskIds.size === filteredTasks.length) {
+            setSelectedTaskIds(new Set());
+        } else {
+            setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)));
+        }
+    };
+
     const filteredTasks = useMemo(() => {
         return tasks.filter(task => {
             const matchesStatus = filterStatus === 'all' || task.status === filterStatus;
@@ -148,13 +201,57 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
                 </div>
 
                 {isManager && onCreateTask && (
-                    <button
-                        onClick={() => setIsModalOpen(true)}
-                        className="flex items-center justify-center gap-2 bg-slate-900 text-white px-4 md:px-5 py-2.5 md:py-3 rounded-lg md:rounded-xl hover:bg-slate-800 transition-colors font-bold shadow-lg shadow-slate-200 text-xs md:text-sm"
-                    >
-                        <Plus size={18} />
-                        Nova OS
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <button
+                            onClick={() => {
+                                setIsSelectionMode(!isSelectionMode);
+                                if (isSelectionMode) setSelectedTaskIds(new Set());
+                            }}
+                            className={`flex items-center justify-center gap-2 px-4 py-2.5 md:py-3 rounded-lg md:rounded-xl font-bold transition-all text-xs md:text-sm border-2 ${isSelectionMode ? 'bg-slate-900 border-slate-900 text-white shadow-lg shadow-slate-200' : 'bg-white border-slate-100 text-slate-600 hover:border-slate-200'}`}
+                        >
+                            {isSelectionMode ? <X size={18} /> : <CheckSquare size={18} />}
+                            {isSelectionMode ? 'Cancelar' : 'Selecionar'}
+                        </button>
+
+                        {isSelectionMode && (
+                            <>
+                                <button
+                                    onClick={toggleSelectAll}
+                                    className="flex items-center justify-center gap-2 px-4 py-2.5 md:py-3 bg-white border-2 border-slate-100 text-slate-600 font-bold rounded-lg md:rounded-xl hover:border-slate-200 transition-all text-xs md:text-sm"
+                                >
+                                    {selectedTaskIds.size === filteredTasks.length ? 'Desmarcar' : 'Todos'}
+                                </button>
+
+                                <button
+                                    disabled={selectedTaskIds.size === 0}
+                                    onClick={handleBulkDelete}
+                                    className={`flex items-center justify-center gap-2 px-4 py-2.5 md:py-3 font-bold rounded-lg md:rounded-xl transition-all text-xs md:text-sm shadow-lg ${selectedTaskIds.size > 0 ? 'bg-red-500 text-white hover:bg-red-600 shadow-red-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none'}`}
+                                >
+                                    <Trash2 size={18} />
+                                    Excluir ({selectedTaskIds.size})
+                                </button>
+                            </>
+                        )}
+
+                        {!isSelectionMode && (
+                            <>
+                                <button
+                                    onClick={() => setIsImportModalOpen(true)}
+                                    className="flex items-center justify-center gap-2 bg-emerald-500 text-white px-4 md:px-5 py-2.5 md:py-3 rounded-lg md:rounded-xl hover:bg-emerald-600 transition-colors font-bold shadow-lg shadow-emerald-200 text-xs md:text-sm"
+                                >
+                                    <FileSpreadsheet size={18} />
+                                    Importar
+                                </button>
+                                <button
+                                    onClick={() => setIsModalOpen(true)}
+                                    className="flex items-center justify-center gap-2 bg-slate-900 text-white px-4 md:px-5 py-2.5 md:py-3 rounded-lg md:rounded-xl hover:bg-slate-800 transition-colors font-bold shadow-lg shadow-slate-200 text-xs md:text-sm"
+                                >
+                                    <Plus size={18} />
+                                    Nova OS
+                                </button>
+                            </>
+                        )}
+                    </div>
                 )}
             </div>
 
@@ -194,9 +291,14 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
                         return (
                             <div
                                 key={task.id}
-                                onClick={() => handleViewDetails(task)}
-                                className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-sm hover:shadow-md transition-shadow group cursor-pointer"
+                                onClick={() => isSelectionMode ? toggleSelectTask(task.id, {} as any) : handleViewDetails(task)}
+                                className={`group relative bg-white rounded-2xl border-2 p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-sm hover:shadow-md transition-all cursor-pointer ${selectedTaskIds.has(task.id) ? 'border-primary ring-2 ring-primary/20 bg-primary/5' : 'border-slate-100 hover:border-primary/50'}`}
                             >
+                                {isSelectionMode && (
+                                    <div className={`absolute -top-2 -left-2 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all z-10 ${selectedTaskIds.has(task.id) ? 'bg-primary border-primary text-white shadow-lg' : 'bg-white border-slate-200 text-slate-300'}`}>
+                                        {selectedTaskIds.has(task.id) ? <CheckCircle size={18} /> : <Square size={18} />}
+                                    </div>
+                                )}
                                 <div className="flex items-start gap-4 flex-1">
                                     <div className={`p-3 rounded-xl ${getStatusColor(task.status)} shrink-0`}>
                                         {task.status === TaskStatus.COMPLETED ? <CheckCircle size={24} /> :
@@ -227,6 +329,17 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
                                         <p className="text-[8px] md:text-[10px] font-black uppercase text-slate-400 tracking-widest">Data</p>
                                         <p className="text-xs md:text-sm font-bold text-slate-700">{task.scheduledDate}</p>
                                     </div>
+
+                                    {isManager && (
+                                        <button
+                                            onClick={(e) => handleDeleteTask(task.id, e)}
+                                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                            title="Excluir OS"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
+                                    )}
+
                                     <ChevronRight className="text-slate-300 group-hover:translate-x-1 transition-transform" size={20} />
                                 </div>
                             </div>
@@ -274,7 +387,7 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
                                                         <p className="text-[10px] font-bold text-slate-400">{log.createdAt.toLocaleString('pt-BR')}</p>
                                                     </div>
                                                     <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-md ${log.action === 'INSERT' ? 'bg-green-100 text-green-700' :
-                                                            log.action === 'UPDATE' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'
+                                                        log.action === 'UPDATE' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'
                                                         }`}>
                                                         {log.action === 'INSERT' ? 'CRIADO' : log.action === 'UPDATE' ? 'ATUALIZADO' : 'DELETADO'}
                                                     </span>
@@ -403,6 +516,17 @@ const OSView: React.FC<Props> = ({ tasks, users, currentUser, onUpdateTask, onCr
                     </button>
                 </form>
             </SimpleModal>
+
+            <TaskImportModal
+                isOpen={isImportModalOpen}
+                onClose={() => setIsImportModalOpen(false)}
+                onSuccess={() => {
+                    // Refresh assets or tasks
+                    window.location.reload();
+                }}
+                users={users}
+                currentUser={currentUser}
+            />
         </div>
     );
 };
