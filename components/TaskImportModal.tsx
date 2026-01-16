@@ -74,14 +74,14 @@ const TaskImportModal: React.FC<TaskImportModalProps> = ({ isOpen, onClose, onSu
 
             if (rawData.length === 0) throw new Error("O arquivo está vazio.");
 
-            // Find Header Row (scan first 10 just in case)
+            // Finding Header Row keywords
             let headerRowIndex = -1;
             let headerRow: string[] = [];
 
             for (let i = 0; i < Math.min(rawData.length, 10); i++) {
                 const normalized = rawData[i].map(cell => normalizeHeader(String(cell || '')));
                 const hasKeyColumns = normalized.some(h =>
-                    h.includes("PARADA") || h.includes("CODIGO") || h.includes("ATIVO") || h.includes("ENDERECO")
+                    h.includes("PARADA") || h.includes("CODIGO") || h.includes("ATIVO") || h.includes("ELETRO") || h.includes("ENDERECO")
                 );
                 if (hasKeyColumns) {
                     headerRowIndex = i;
@@ -114,8 +114,8 @@ const TaskImportModal: React.FC<TaskImportModalProps> = ({ isOpen, onClose, onSu
             // Heuristic search for columns
             headerRow.forEach((h, i) => {
                 const hn = h.toUpperCase();
-                if (hn.includes("PARADA") || hn.includes("CODIGO") || hn.includes("ATIVO") || hn.includes("ELETR")) colMap.code = i;
-                if (hn.includes("ELETRO")) colMap.altCode = i;
+                // Prioritize ELETRO for the primary code
+                if (hn.includes("ELETRO") || hn.includes("PARADA") || hn.includes("CODIGO") || hn.includes("ATIVO")) colMap.code = i;
                 if (hn.includes("ENDERECO") || hn.includes("LOCAL") || hn.includes("NOME") || hn.includes("LOGRADOURO")) colMap.address = i;
                 if (hn.includes("BAIRRO") || hn.includes("DISTRITO")) colMap.bairro = i;
                 if (hn.includes("NUMERO") || hn === "Nº" || hn === "SN") colMap.numero = i;
@@ -402,7 +402,7 @@ const TaskImportModal: React.FC<TaskImportModalProps> = ({ isOpen, onClose, onSu
                             <table className="w-full text-left text-[10px]">
                                 <thead className="bg-slate-50 font-black text-slate-400 uppercase tracking-wider sticky top-0">
                                     <tr>
-                                        <th className="p-3">Nº Eletr</th>
+                                        <th className="p-3">Nº Eletro</th>
                                         <th className="p-3">Endereço</th>
                                         <th className="p-3">Tipo</th>
                                     </tr>

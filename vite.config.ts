@@ -15,6 +15,9 @@ export default defineConfig(({ mode }) => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['assets/logo_icon.png'],
+        workbox: {
+          maximumFileSizeToCacheInBytes: 5000000, // Increase limit to 5MB
+        },
         manifest: {
           name: 'Eletromidia Field Manager',
           short_name: 'Field Manager',
@@ -37,6 +40,18 @@ export default defineConfig(({ mode }) => {
         }
       })
     ],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+            'vendor-supabase': ['@supabase/supabase-js'],
+            'vendor-ui': ['lucide-react', 'recharts'],
+            'vendor-utils': ['xlsx', 'exceljs']
+          }
+        }
+      }
+    },
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
