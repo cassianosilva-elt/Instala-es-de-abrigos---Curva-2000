@@ -12,16 +12,19 @@ import { ChatWidget } from './components/ChatWidget';
 import Login from './components/Login';
 import { ProfileSettings } from './components/ProfileSettings';
 import { NotificationCenter } from './components/NotificationCenter';
+import { MeasurementAdminView } from './components/MeasurementAdminView';
 import { MeasurementView } from './components/MeasurementView';
 import { EmployeesView } from './components/EmployeesView';
 import { VehicleControlView } from './components/VehicleControlView';
 import OpecManagementView from './components/OpecManagementView';
+
+
 import { ReportsView } from './components/ReportsView';
 import { DailyReportView } from './components/DailyReportView';
 import { RouteControlView } from './components/RouteControlView';
 import { supabase } from './api/supabaseClient';
 import { ThemeProvider, companyThemes } from './contexts/ThemeContext';
-import { LogOut, LayoutGrid, Users, Map as MapIcon, ClipboardList, ShieldCheck, Building2, Activity, Loader2, X, Settings, Calculator, Menu, ChevronLeft, ChevronRight, Car, Smartphone, FileSpreadsheet, ListTodo, Map } from 'lucide-react';
+import { LogOut, LayoutGrid, Users, Map as MapIcon, ClipboardList, ShieldCheck, Building2, Activity, Loader2, X, Settings, Calculator, Menu, ChevronLeft, ChevronRight, Car, Smartphone, FileSpreadsheet, ListTodo, Map, DollarSign } from 'lucide-react';
 import { getTasksByUserId, getTeams, getAllUsers, createTeam, updateTeam, deleteTeam } from './api/fieldManagerApi';
 import { useOfflineSync } from './hooks/useOfflineSync';
 
@@ -408,6 +411,7 @@ const App: React.FC = () => {
                 <SidebarLink icon={<ListTodo size={20} />} label="Relatório Diário" active={activeTab === 'daily_report'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('daily_report')} />
                 <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatórios" active={activeTab === 'reports'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('reports')} />
                 <SidebarLink icon={<Calculator size={20} />} label="Medição" active={activeTab === 'medicao'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('medicao')} />
+
                 <SidebarLink icon={<Users size={20} />} label="Funcionários" active={activeTab === 'funcionarios'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('funcionarios')} />
                 <SidebarLink icon={<Users size={20} />} label="Equipes" active={activeTab === 'equipes'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('equipes')} />
                 {!isPartner && (
@@ -522,6 +526,7 @@ const App: React.FC = () => {
                 <SidebarLink icon={<ListTodo size={20} />} label="Relatório Diário" active={activeTab === 'daily_report'} onClick={() => { setActiveTab('daily_report'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatórios" active={activeTab === 'reports'} onClick={() => { setActiveTab('reports'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<Calculator size={20} />} label="Medição" active={activeTab === 'medicao'} onClick={() => { setActiveTab('medicao'); setIsMobileMenuOpen(false); }} />
+
                 <SidebarLink icon={<Users size={20} />} label="Funcionários" active={activeTab === 'funcionarios'} onClick={() => { setActiveTab('funcionarios'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<Users size={20} />} label="Equipes" active={activeTab === 'equipes'} onClick={() => { setActiveTab('equipes'); setIsMobileMenuOpen(false); }} />
                 {!isPartner && (

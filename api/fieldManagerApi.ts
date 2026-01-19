@@ -589,13 +589,33 @@ export const getMeasurementPrices = async (companyId: string): Promise<any[]> =>
         .eq('company_id', companyId);
 
     if (error) return [];
-    return data.map(p => ({
+
+    const mappedPrices = data.map(p => ({
         id: p.id,
         category: p.category,
         description: p.description,
         unit: p.unit,
         price: p.price
     }));
+
+    // Fallback: Ensure critical items exist if missing from DB
+    const missingTotemItem = {
+        id: 'totem_instalacao_completa_fallback',
+        category: 'TOTEM',
+        description: 'Instalação Completa de Totem, incluindo a execução do piso podotátil',
+        unit: 'UN',
+        price: 480.69
+    };
+
+    const hasTotemItem = mappedPrices.some(p =>
+        p.description && p.description.normalize('NFD').replace(/[\u0300-\u036f]/g, "").toLowerCase().includes('instalacao completa de totem')
+    );
+
+    if (!hasTotemItem) {
+        mappedPrices.push(missingTotemItem);
+    }
+
+    return mappedPrices;
 };
 
 export const bulkUpdateMeasurementPrices = async (companyId: string, prices: any[], category?: string): Promise<void> => {
@@ -690,12 +710,12 @@ export const bulkCreateEmployees = async (employees: Omit<Employee, 'id' | 'stat
 };
 
 export const createAbsence = async (absence: Omit<Absence, 'id'>): Promise<void> => {
-    const { error } = await supabase.from('employee_absences').insert({
-        employee_id: absence.employeeId,
+    const { error } = await supabase.from('daily_absences').insert({
+        employee_id: absence.employeeId || null, // Can be null for pending employees
         employee_name: absence.employeeName,
         date: absence.date,
         reason: absence.reason,
-        description: absence.description,
+        notes: absence.description,
         company_id: absence.companyId,
         evidence_url: absence.evidenceUrl
     });
@@ -703,7 +723,7 @@ export const createAbsence = async (absence: Omit<Absence, 'id'>): Promise<void>
 };
 
 export const getAbsences = async (companyId: string): Promise<Absence[]> => {
-    let query = supabase.from('employee_absences').select('*');
+    let query = supabase.from('daily_absences').select('*');
     if (companyId !== 'internal') {
         query = query.eq('company_id', companyId);
     }
@@ -716,7 +736,7 @@ export const getAbsences = async (companyId: string): Promise<Absence[]> => {
         employeeName: item.employee_name,
         date: item.date,
         reason: item.reason,
-        description: item.description,
+        description: item.notes,
         companyId: item.company_id,
         evidenceUrl: item.evidence_url
     }));
@@ -1258,10 +1278,76 @@ export const saveAssetMeasurement = async (measurement: AssetMeasurement): Promi
         company_id: measurement.companyId,
         asset_type: measurement.assetType,
         stages: measurement.stages,
-        total_value: measurement.totalValue
+        total_value: measurement.totalValue,
+        items_snapshot: measurement.itemsSnapshot || []
     });
 
     if (error) throw error;
+};
+
+// --- ASSET MEASUREMENTS QUERIES ---
+
+// For partners - get measurements from their own company
+export const getAssetMeasurements = async (companyId: string): Promise<AssetMeasurement[]> => {
+    const { data, error } = await supabase
+        .from('asset_measurements')
+        .select(`
+            *,
+            profiles!technician_id(name),
+            assets!asset_id(code)
+        `)
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: false });
+
+    if (error) return [];
+
+    return data.map(m => ({
+        id: m.id,
+        assetId: m.asset_id,
+        technicianId: m.technician_id,
+        companyId: m.company_id,
+        assetType: m.asset_type,
+        stages: m.stages || [],
+        totalValue: m.total_value,
+        itemsSnapshot: m.items_snapshot || [],
+        createdAt: m.created_at,
+        technicianName: m.profiles?.name,
+        assetCode: m.assets?.code
+    }));
+};
+
+// For admin (internal) - get all measurements with optional company filter
+export const getAllAssetMeasurements = async (filterCompanyId?: string): Promise<AssetMeasurement[]> => {
+    let query = supabase
+        .from('asset_measurements')
+        .select(`
+            *,
+            profiles!technician_id(name),
+            assets!asset_id(code)
+        `)
+        .order('created_at', { ascending: false });
+
+    if (filterCompanyId && filterCompanyId !== 'all') {
+        query = query.eq('company_id', filterCompanyId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) return [];
+
+    return data.map(m => ({
+        id: m.id,
+        assetId: m.asset_id,
+        technicianId: m.technician_id,
+        companyId: m.company_id,
+        assetType: m.asset_type,
+        stages: m.stages || [],
+        totalValue: m.total_value,
+        itemsSnapshot: m.items_snapshot || [],
+        createdAt: m.created_at,
+        technicianName: m.profiles?.name,
+        assetCode: m.assets?.code
+    }));
 };
 
 // --- REGRA 4: Realtime Subscription para Live Feed ---

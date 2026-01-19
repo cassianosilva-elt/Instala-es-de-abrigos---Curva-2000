@@ -4,7 +4,7 @@ import { User, DailyReport, DailyActivity, Team, UserRole, Absence, Vehicle, Ope
 import { ACTIVITY_TYPES } from '../api/activityTypes';
 import { getTeams, getAllUsers, getDailyReportByTeamAndDate, upsertDailyReport, createAbsence, getAbsences, deleteAbsence, getVehicles, getOpecDevices, getDailyReports, subscribeToDailyActivities, deleteDailyActivity, updateDailyActivityQuantity } from '../api/fieldManagerApi';
 import { supabase } from '../api/supabaseClient';
-import { ClipboardList, Users, Calendar, Plus, Save, History, X, AlertCircle, Download, Trash2, Car, Smartphone, Search } from 'lucide-react';
+import { ClipboardList, Users, Calendar, Plus, Save, History, X, AlertCircle, Download, Trash2, Car, Smartphone, Search, CheckCircle } from 'lucide-react';
 import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumns, saveWorkbook } from '../utils/excelExport';
 
 interface Props {
@@ -541,20 +541,40 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                         </h3>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
-                            {ACTIVITY_TYPES.map(type => (
-                                <button
-                                    key={type}
-                                    onClick={() => handleAddActivity(type)}
-                                    className="p-4 rounded-2xl border bg-slate-50 border-slate-100 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all flex items-center justify-between gap-4 group cursor-pointer select-none relative active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-primary/20"
-                                >
-                                    <span className="text-[11px] font-black uppercase leading-tight text-slate-600 group-hover:text-primary text-left">
-                                        {type}
-                                    </span>
-                                    <div className="w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center group-hover:border-primary group-active:scale-90 transition-transform">
-                                        <Plus size={14} className="text-slate-400 group-hover:text-primary" />
-                                    </div>
-                                </button>
-                            ))}
+                            {ACTIVITY_TYPES.map(type => {
+                                const isSelected = selectedActivities.some(a => a.activityType === type);
+                                return (
+                                    <button
+                                        key={type}
+                                        onClick={() => {
+                                            if (isSelected) {
+                                                // Toggle off: remove all instances of this type
+                                                setSelectedActivities(prev => prev.filter(a => a.activityType !== type));
+                                            } else {
+                                                // Toggle on: add one instance
+                                                handleAddActivity(type);
+                                            }
+                                        }}
+                                        className={`p-4 rounded-2xl border transition-all flex items-center justify-between gap-4 group cursor-pointer select-none relative active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-primary/20 ${isSelected
+                                            ? 'bg-orange-500 border-orange-600 shadow-md'
+                                            : 'bg-slate-50 border-slate-100 hover:border-primary hover:bg-primary/5 hover:text-primary'
+                                            }`}
+                                    >
+                                        <span className={`text-[11px] font-black uppercase leading-tight text-left ${isSelected ? 'text-white' : 'text-slate-600 group-hover:text-primary'}`}>
+                                            {type}
+                                        </span>
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-transform ${isSelected
+                                            ? 'bg-white/20 border border-white/40' // Orange state icon bg
+                                            : 'bg-white border border-slate-200 group-hover:border-primary'
+                                            }`}>
+                                            {isSelected
+                                                ? <CheckCircle size={14} className="text-white" /> // Show checkmark if selected
+                                                : <Plus size={14} className="text-slate-400 group-hover:text-primary" />
+                                            }
+                                        </div>
+                                    </button>
+                                );
+                            })}
                         </div>
 
                         {/* Log de Atividades Adicionadas */}

@@ -55,6 +55,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         { value: 'alvares', label: 'Alvares' },
         { value: 'bassi', label: 'Bassi' },
         { value: 'gf1', label: 'GF1' },
+        { value: 'afn_nogueira', label: 'AFN Nogueira' },
     ];
 
     const roles = isInternal ? internalRoles : partnerRoles;

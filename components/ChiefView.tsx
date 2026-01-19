@@ -114,6 +114,7 @@ const ChiefView: React.FC<Props> = ({ chief, tasks, teams, users, onCreateTask }
     { id: 'alvares', name: 'Alvares Engenharia', logo: '/assets/logo_alvares.png', initials: 'AL', color: '#002c4d' },
     { id: 'bassi', name: 'Bassi', logo: '/assets/logo_bassi.png', initials: 'BA', color: '#DC2626' },
     { id: 'gf1', name: 'GF1', logo: null, initials: 'GF1', color: '#16A34A' },
+    { id: 'afn_nogueira', name: 'AFN Nogueira', logo: null, initials: 'AFN', color: '#7C3AED' },
   ];
 
   const isInternalChief = chief.role === UserRole.CHEFE;

@@ -7,12 +7,11 @@ const ALTERNATE_ROW_COLOR = 'FFF5EE';
 /**
  * Creates a workbook with Eletromidia styling and a logo header
  */
-export async function createEletromidiaWorkbook(title: string, sheetName: string) {
+export async function createEletromidiaWorkbook(title: string, sheetName: string, partnerLogoUrl?: string | null) {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet(sheetName);
 
-    // 1. Add Logo and Header (Rows 1-4)
-    // We fetch the logo and convert to base64 for embedding
+    // 1. Add Eletromidia Logo (Left)
     try {
         const logoUrl = '/assets/logo_full.png';
         const response = await fetch(logoUrl);
@@ -23,16 +22,36 @@ export async function createEletromidiaWorkbook(title: string, sheetName: string
             extension: 'png',
         });
 
-        // Add logo to worksheet (positioned at A1, span 2 columns and 3 rows approx)
         worksheet.addImage(logoId, {
-            tl: { col: 0.1, row: 0.2 },
-            ext: { width: 180, height: 40 }
+            tl: { col: 0.2, row: 0.2 },
+            ext: { width: 140, height: 35 }
         });
     } catch (error) {
-        console.warn('Could not load logo for Excel export:', error);
+        console.warn('Could not load Eletromidia logo:', error);
     }
 
-    // Set Title in row 2, column C (next to logo)
+    // 2. Add Partner Logo (Right) - If provided
+    if (partnerLogoUrl) {
+        try {
+            const response = await fetch(partnerLogoUrl);
+            const buffer = await response.arrayBuffer();
+
+            const partnerLogoId = workbook.addImage({
+                buffer: buffer,
+                extension: 'png',
+            });
+
+            // Position at column H (approx)
+            worksheet.addImage(partnerLogoId, {
+                tl: { col: 6.5, row: 0.2 },
+                ext: { width: 100, height: 35 }
+            });
+        } catch (error) {
+            console.warn('Could not load Partner logo:', error);
+        }
+    }
+
+    // Set Title in row 2, column C 
     const titleCell = worksheet.getCell('C2');
     titleCell.value = title.toUpperCase();
     titleCell.font = {
@@ -42,17 +61,23 @@ export async function createEletromidiaWorkbook(title: string, sheetName: string
         bold: true,
         color: { argb: '333333' }
     };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'left' };
 
     // Add Generation Date in row 3, column C
     const dateCell = worksheet.getCell('C3');
     dateCell.value = `Gerado em: ${new Date().toLocaleString('pt-BR')}`;
-    dateCell.font = { name: 'Arial', size: 10, italic: true };
+    dateCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: '666666' } };
 
-    // Move to row 6 for the actual table data
-    worksheet.addRow([]); // Row 4 (empty)
-    worksheet.addRow([]); // Row 5 (empty)
+    // Add visual separator (Orange Line)
+    worksheet.mergeCells('A5:G5');
+    const separator = worksheet.getCell('A5');
+    separator.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: ELETROMIDIA_ORANGE }
+    };
 
-    return { workbook, worksheet, startRow: 6 };
+    return { workbook, worksheet, startRow: 7 };
 }
 
 /**

@@ -46,6 +46,17 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
     const [reportMonth, setReportMonth] = useState<number>(new Date().getMonth() + 1);
     const [reportYear, setReportYear] = useState<number>(new Date().getFullYear());
 
+    const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState(false);
+    const [addEmployeeForm, setAddEmployeeForm] = useState({
+        name: '',
+        email: '',
+        code: '',
+        role: 'TECNICO',
+        shift: '',
+        leaderName: ''
+    });
+    const [addingEmployee, setAddingEmployee] = useState(false);
+
     useEffect(() => {
         loadEmployees();
         loadAbsences();
@@ -344,6 +355,58 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
         setSortConfig({ key, direction });
     };
 
+    const handleAddSingleEmployee = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!addEmployeeForm.name.trim()) return;
+
+        setAddingEmployee(true);
+        try {
+            // Generate email if not provided
+            let email = addEmployeeForm.email.trim();
+            if (!email) {
+                const cleanName = addEmployeeForm.name.trim().toLowerCase().replace(/\s+/g, ' ');
+                const parts = cleanName.split(' ');
+                if (parts.length > 1) {
+                    const first = parts[0];
+                    const last = parts[parts.length - 1];
+                    email = `${first}.${last}@eletromidia.com.br`;
+                } else {
+                    email = `${parts[0]}@eletromidia.com.br`;
+                }
+            }
+
+            // Map role
+            let role: UserRole = addEmployeeForm.role as UserRole;
+            if (currentUser.companyId !== 'internal') {
+                if (role === UserRole.TECNICO) role = UserRole.PARCEIRO_TECNICO;
+                if (role === UserRole.LIDER) role = UserRole.PARCEIRO_LIDER;
+                if (role === UserRole.CHEFE) role = UserRole.PARCEIRO_CHEFE;
+            }
+
+            const newEmployee = {
+                name: addEmployeeForm.name.trim(),
+                email,
+                role,
+                companyId: currentUser.companyId,
+                companyName: currentUser.companyName,
+                shift: addEmployeeForm.shift || undefined,
+                code: addEmployeeForm.code || undefined,
+                leaderName: addEmployeeForm.leaderName || undefined
+            };
+
+            await bulkCreateEmployees([newEmployee]);
+            alert('Funcionário adicionado com sucesso!');
+            setIsAddEmployeeModalOpen(false);
+            setAddEmployeeForm({ name: '', email: '', code: '', role: 'TECNICO', shift: '', leaderName: '' });
+            loadEmployees();
+        } catch (err) {
+            console.error('Error adding employee:', err);
+            alert('Erro ao adicionar funcionário.');
+        } finally {
+            setAddingEmployee(false);
+        }
+    };
+
     const filteredEmployees = employees.filter(employee => {
         const matchesSearch =
             employee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -391,6 +454,12 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
                         className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-4 py-2.5 rounded-xl font-bold uppercase tracking-wider text-xs transition-all shadow-sm"
                     >
                         <FileText size={16} /> Relatórios
+                    </button>
+                    <button
+                        onClick={() => setIsAddEmployeeModalOpen(true)}
+                        className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-4 py-2.5 rounded-xl font-bold uppercase tracking-wider text-xs transition-all shadow-md hover:shadow-lg"
+                    >
+                        <Plus size={16} /> Adicionar
                     </button>
                     <button
                         onClick={() => setIsImportModalOpen(true)}
@@ -865,6 +934,115 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
                                 <Download size={20} /> Gerar Excel de Ausências
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+            {isAddEmployeeModalOpen && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full relative max-h-[90vh] overflow-y-auto">
+                        <button
+                            onClick={() => setIsAddEmployeeModalOpen(false)}
+                            className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full"
+                        >
+                            <AlertCircle size={20} />
+                        </button>
+
+                        <h3 className="text-xl font-black text-slate-800 mb-2">Adicionar Funcionário</h3>
+                        <p className="text-slate-500 text-sm mb-6">Preencha os dados do funcionário. Apenas o <strong>nome</strong> é obrigatório.</p>
+
+                        <form onSubmit={handleAddSingleEmployee} className="space-y-4">
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                                    Nome <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    required
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                    value={addEmployeeForm.name}
+                                    onChange={e => setAddEmployeeForm({ ...addEmployeeForm, name: e.target.value })}
+                                    placeholder="Nome completo do funcionário"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Email (Opcional)</label>
+                                <input
+                                    type="email"
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                    value={addEmployeeForm.email}
+                                    onChange={e => setAddEmployeeForm({ ...addEmployeeForm, email: e.target.value })}
+                                    placeholder="email@empresa.com.br (gerado automaticamente se vazio)"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Cadastro (Opcional)</label>
+                                    <input
+                                        type="text"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                        value={addEmployeeForm.code}
+                                        onChange={e => setAddEmployeeForm({ ...addEmployeeForm, code: e.target.value })}
+                                        placeholder="Matrícula"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Turno (Opcional)</label>
+                                    <select
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                        value={addEmployeeForm.shift}
+                                        onChange={e => setAddEmployeeForm({ ...addEmployeeForm, shift: e.target.value })}
+                                    >
+                                        <option value="">Selecione...</option>
+                                        <option value="DIA">DIA</option>
+                                        <option value="NOITE">NOITE</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Cargo (Opcional)</label>
+                                    <select
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                        value={addEmployeeForm.role}
+                                        onChange={e => setAddEmployeeForm({ ...addEmployeeForm, role: e.target.value })}
+                                    >
+                                        <option value="TECNICO">Técnico</option>
+                                        <option value="LIDER">Líder</option>
+                                        <option value="CHEFE">Chefe</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Líder (Opcional)</label>
+                                    <input
+                                        type="text"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                        value={addEmployeeForm.leaderName}
+                                        onChange={e => setAddEmployeeForm({ ...addEmployeeForm, leaderName: e.target.value })}
+                                        placeholder="Nome do líder"
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={addingEmployee || !addEmployeeForm.name.trim()}
+                                className="w-full bg-primary hover:bg-primary/90 text-white font-bold py-3 rounded-xl shadow-lg shadow-primary/20 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {addingEmployee ? (
+                                    <>
+                                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                        Adicionando...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Plus size={20} /> Adicionar Funcionário
+                                    </>
+                                )}
+                            </button>
+                        </form>
                     </div>
                 </div>
             )}

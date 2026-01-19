@@ -257,6 +257,13 @@ export interface DailyReport {
   absences?: Absence[];
 }
 
+export interface MeasurementItem {
+  stage: string;
+  description: string;
+  price: number;
+  unit: string;
+}
+
 export interface AssetMeasurement {
   id?: string;
   assetId: string;
@@ -265,5 +272,8 @@ export interface AssetMeasurement {
   assetType: string;
   stages: string[];
   totalValue: number;
+  itemsSnapshot?: MeasurementItem[];
   createdAt?: string;
+  technicianName?: string; // Hydrated for UI
+  assetCode?: string; // Hydrated for UI
 }
