@@ -35,7 +35,7 @@ const getIconForDescription = (description: string) => {
 export const MeasurementView: React.FC<{ currentUser: User }> = ({ currentUser }) => {
     // Admin Tabs State
     const [adminTab, setAdminTab] = useState<'new' | 'dashboard' | 'prices'>('new');
-    const isInternalAdmin = currentUser.role === UserRole.CHEFE; // Assuming CHEFE is the admin role who sees everything
+    const isInternalAdmin = currentUser.role === UserRole.CHEFE || currentUser.role === UserRole.LIDER; // CHEFE and LIDER are admins
 
     // --------------------------------------------------------------------------
     // Existing "New Measurement" Logic (Preserved)
@@ -571,11 +571,11 @@ export const MeasurementView: React.FC<{ currentUser: User }> = ({ currentUser }
                 </>
             )}
 
-            {adminTab === 'dashboard' && currentUser.role === UserRole.CHEFE && (
+            {adminTab === 'dashboard' && isInternalAdmin && (
                 <MeasurementAdminView currentUser={currentUser} />
             )}
 
-            {adminTab === 'prices' && currentUser.role === UserRole.CHEFE && (
+            {adminTab === 'prices' && isInternalAdmin && (
                 <MeasurementPriceManager />
             )}
         </div>
