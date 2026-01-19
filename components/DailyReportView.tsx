@@ -2,7 +2,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, DailyReport, DailyActivity, Team, UserRole, Absence, Vehicle, OpecDevice } from '../types';
 import { ACTIVITY_TYPES } from '../api/activityTypes';
-import { getTeams, getAllUsers, getDailyReportByTeamAndDate, upsertDailyReport, createAbsence, getAbsences, deleteAbsence, getVehicles, getOpecDevices, getDailyReports } from '../api/fieldManagerApi';
+import { getTeams, getAllUsers, getDailyReportByTeamAndDate, upsertDailyReport, createAbsence, getAbsences, deleteAbsence, getVehicles, getOpecDevices, getDailyReports, subscribeToDailyActivities, deleteDailyActivity, updateDailyActivityQuantity } from '../api/fieldManagerApi';
+import { supabase } from '../api/supabaseClient';
 import { ClipboardList, Users, Calendar, Plus, Save, History, X, AlertCircle, Download, Trash2, Car, Smartphone, Search } from 'lucide-react';
 import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumns, saveWorkbook } from '../utils/excelExport';
 
@@ -37,16 +38,35 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     }, [date]);
 
     const isChief = currentUser.role === UserRole.CHEFE || currentUser.role === UserRole.PARCEIRO_CHEFE;
+    // REGRA 2: Chefes e Líderes veem visualização consolidada
+    const isLeaderOrChief = [UserRole.LIDER, UserRole.CHEFE, UserRole.PARCEIRO_LIDER, UserRole.PARCEIRO_CHEFE].includes(currentUser.role);
+
 
     useEffect(() => {
         loadInitialData();
     }, []);
 
     useEffect(() => {
-        if ((selectedTeam || selectedTechnicianIds.length > 0) && date) {
+        if (date) {
             loadReport();
         }
     }, [selectedTeam, date]);
+
+    // REGRA 4: Realtime subscription para Live Feed
+    useEffect(() => {
+        if (isLeaderOrChief && date) {
+            const channel = subscribeToDailyActivities(currentUser.companyId, date, (payload) => {
+                // Quando uma nova atividade é inserida, recarrega os relatórios
+                if (payload.eventType === 'INSERT') {
+                    loadReport();
+                }
+            });
+
+            return () => {
+                supabase.removeChannel(channel);
+            };
+        }
+    }, [currentUser.companyId, date, isLeaderOrChief]);
 
     const loadInitialData = async () => {
         setLoading(true);
@@ -250,6 +270,8 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
 
         // 1. Calculate all unique participants FROM ALL REPORTS OF THE DAY
         const participantIds = new Set<string>();
+        let maxTechs = 0; // Initialize maxTechs here
+
         allDayReports.forEach(r => {
             if (r.teamId) {
                 const team = teams.find(t => t.id === r.teamId);
@@ -261,6 +283,8 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
             }
             r.activities.forEach(a => {
                 a.technicianIds?.forEach(tid => participantIds.add(tid));
+                // Update maxTechs based on ALL activities in ALL reports
+                maxTechs = Math.max(maxTechs, a.technicianIds?.length || 0);
             });
             if (r.userId) participantIds.add(r.userId);
         });
@@ -280,10 +304,9 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
         );
 
         // --- SHEET 1: ATIVIDADES ---
-        // Header row
-        const activitiesHeader = ['Data', 'Veículo', 'OPEC', 'Rota', 'Tipo de Atividade', 'Quantidade'];
-        // Find max techs to add columns
-        const maxTechs = selectedActivities.reduce((max, a) => Math.max(max, a.technicianIds?.length || 0), 0);
+        // Header row - REGRA 3: Inclui coluna Líder Responsável
+        const activitiesHeader = ['Data', 'Veículo', 'OPEC', 'Rota', 'Tipo de Atividade', 'Quantidade', 'Líder Responsável', 'Observações'];
+        // Use maxTechs calculated from all reports
         for (let i = 0; i < Math.max(maxTechs, 1); i++) {
             activitiesHeader.push(`Técnico ${i + 1}`);
         }
@@ -298,13 +321,16 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
             const rowOpecInfo = opecDevices.find(o => o.id === r.opecId);
 
             r.activities.forEach((a) => {
-                const rowData = [
+                // REGRA 3: Inclui liderName no Excel
+                const rowData: (string | number)[] = [
                     date,
                     rowCarInfo ? `${rowCarInfo.model} (${rowCarInfo.plate})` : '',
                     rowOpecInfo ? `${rowOpecInfo.assetCode}` : '',
                     r.route || '',
                     a.activityType,
-                    a.quantity
+                    a.quantity,
+                    a.liderName || users.find(u => u.id === r.userId)?.name || 'Desconhecido', // Líder Responsável
+                    r.notes || ''
                 ];
 
                 if (a.technicianIds && a.technicianIds.length > 0) {
@@ -388,6 +414,10 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
         );
         if (selectedTeam) setSelectedTeam('');
     };
+
+    const hasActivitiesInDay = useMemo(() => {
+        return allDayReports.some(r => r.activities && r.activities.length > 0);
+    }, [allDayReports]);
 
     return (
         <div className="space-y-6 max-w-6xl mx-auto pb-20">
@@ -478,12 +508,13 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
 
                     <button
                         onClick={handleExportExcel}
-                        disabled={selectedActivities.length === 0}
+                        disabled={!hasActivitiesInDay}
                         className="flex items-center gap-2 bg-slate-700 text-white px-4 py-3 rounded-2xl font-black text-sm hover:bg-slate-800 transition-all shadow-lg disabled:opacity-50 disabled:grayscale"
                     >
                         <Download size={18} />
                         Exportar
                     </button>
+
                 </div>
             </div>
 

@@ -1,7 +1,13 @@
 
 export const ACTIVITY_TYPES = [
     "Curva de abrigos",
+    "Instalação de abrigos",
+    "Fundação de abrigos",
+    "Supressão de abrigos",
     "Curva de totens",
+    "Instalação de totens",
+    "Fundação de totens",
+    "Supressão de totens",
     "Painéis digitais",
     "Painéis estáticos",
     "Manutenção preventiva civil",

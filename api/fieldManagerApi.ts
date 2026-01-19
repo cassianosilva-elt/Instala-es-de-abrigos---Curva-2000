@@ -1115,7 +1115,10 @@ export const getDailyReports = async (companyId: string, teamId?: string, date?:
             id: a.id,
             activityType: a.activity_type,
             quantity: a.quantity,
-            assetCodes: a.asset_codes
+            assetCodes: a.asset_codes,
+            technicianIds: a.technician_ids,
+            liderResponsavel: a.lider_responsavel,
+            liderName: a.lider_name
         }))
     }));
 };
@@ -1166,7 +1169,9 @@ export const getDailyReportByTeamAndDate = async (
             activityType: a.activity_type,
             quantity: a.quantity,
             assetCodes: a.asset_codes,
-            technicianIds: a.technician_ids
+            technicianIds: a.technician_ids,
+            liderResponsavel: a.lider_responsavel,
+            liderName: a.lider_name
         }))
     };
 };
@@ -1219,18 +1224,20 @@ export const upsertDailyReport = async (report: Omit<DailyReport, 'id'>, id?: st
         }
     }
 
-    // Handle activities (delete and re-insert for simplicity in upsert)
+    // REGRA 1: Append-only - NÃO deleta atividades existentes, apenas insere novas
     if (reportId) {
-        const { error: deleteError } = await supabase.from('daily_activities').delete().eq('report_id', reportId);
-        if (deleteError) throw deleteError;
+        // Filtra apenas atividades NOVAS (sem id) para inserir
+        const newActivities = report.activities.filter(a => !a.id);
 
-        if (report.activities.length > 0) {
-            const activitiesData = report.activities.map(a => ({
+        if (newActivities.length > 0) {
+            const activitiesData = newActivities.map(a => ({
                 report_id: reportId,
                 activity_type: a.activityType,
                 quantity: a.quantity,
                 asset_codes: a.assetCodes,
-                technician_ids: a.technicianIds
+                technician_ids: a.technicianIds,
+                lider_responsavel: report.userId,  // REGRA 3: Rastreabilidade
+                lider_name: a.liderName || null
             }));
             const { error: insertError } = await supabase.from('daily_activities').insert(activitiesData);
             if (insertError) throw insertError;
@@ -1254,5 +1261,62 @@ export const saveAssetMeasurement = async (measurement: AssetMeasurement): Promi
         total_value: measurement.totalValue
     });
 
+    if (error) throw error;
+};
+
+// --- REGRA 4: Realtime Subscription para Live Feed ---
+export const subscribeToDailyActivities = (
+    companyId: string,
+    date: string,
+    onActivityChange: (payload: { eventType: string; activity: DailyActivity; reportId: string }) => void
+) => {
+    const channel = supabase
+        .channel(`daily-activities-${companyId}-${date}`)
+        .on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'daily_activities'
+        }, async (payload) => {
+            // Fetch the full activity with report info
+            const activity = payload.new as any;
+            if (!activity) return;
+
+            // Get the report to check company_id and date
+            const { data: report } = await supabase
+                .from('daily_reports')
+                .select('company_id, date')
+                .eq('id', activity.report_id)
+                .single();
+
+            if (report && report.company_id === companyId && report.date === date) {
+                onActivityChange({
+                    eventType: payload.eventType,
+                    activity: {
+                        id: activity.id,
+                        activityType: activity.activity_type,
+                        quantity: activity.quantity,
+                        assetCodes: activity.asset_codes,
+                        technicianIds: activity.technician_ids,
+                        liderResponsavel: activity.lider_responsavel,
+                        liderName: activity.lider_name
+                    },
+                    reportId: activity.report_id
+                });
+            }
+        })
+        .subscribe();
+
+    return channel;
+};
+
+// --- Deletar atividade individual (apenas Chefes via RLS) ---
+export const deleteDailyActivity = async (activityId: string): Promise<void> => {
+    const { error } = await supabase.from('daily_activities').delete().eq('id', activityId);
+    if (error) throw error;
+};
+
+// --- Atualizar quantidade de uma atividade existente ---
+export const updateDailyActivityQuantity = async (activityId: string, quantity: number): Promise<void> => {
+    const { error } = await supabase.from('daily_activities').update({ quantity }).eq('id', activityId);
     if (error) throw error;
 };
