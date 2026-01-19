@@ -248,6 +248,7 @@ export interface DailyReport {
   technicianIds?: string[]; // IDs of the "main" team/group for the day (optional now)
   carPlate?: string;
   opecId?: string;
+  route?: string;
   notes?: string;
   companyId: string;
   activities: DailyActivity[];

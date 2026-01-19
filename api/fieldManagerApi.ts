@@ -1082,7 +1082,7 @@ export const getAuditLogs = async (tableName: string, recordId: string): Promise
 
 // --- DAILY REPORTS ---
 
-export const getDailyReports = async (companyId: string, teamId?: string): Promise<DailyReport[]> => {
+export const getDailyReports = async (companyId: string, teamId?: string, date?: string): Promise<DailyReport[]> => {
     let query = supabase.from('daily_reports').select('*, daily_activities(*)').order('date', { ascending: false });
 
     if (companyId !== 'internal') {
@@ -1091,6 +1091,10 @@ export const getDailyReports = async (companyId: string, teamId?: string): Promi
 
     if (teamId) {
         query = query.eq('team_id', teamId);
+    }
+
+    if (date) {
+        query = query.eq('date', date);
     }
 
     const { data, error } = await query;
@@ -1104,6 +1108,7 @@ export const getDailyReports = async (companyId: string, teamId?: string): Promi
         technicianIds: r.technician_ids,
         carPlate: r.car_plate,
         opecId: r.opec_id,
+        route: r.route,
         notes: r.notes,
         companyId: r.company_id,
         activities: r.daily_activities.map((a: any) => ({
@@ -1115,7 +1120,13 @@ export const getDailyReports = async (companyId: string, teamId?: string): Promi
     }));
 };
 
-export const getDailyReportByTeamAndDate = async (teamId: string | null, date: string, technicianIds?: string[]): Promise<DailyReport | null> => {
+export const getDailyReportByTeamAndDate = async (
+    teamId: string | null,
+    date: string,
+    technicianIds?: string[],
+    userId?: string,
+    companyId?: string
+): Promise<DailyReport | null> => {
     let query = supabase
         .from('daily_reports')
         .select('*, daily_activities(*)')
@@ -1124,11 +1135,15 @@ export const getDailyReportByTeamAndDate = async (teamId: string | null, date: s
     if (teamId) {
         query = query.eq('team_id', teamId);
     } else {
-        // If no team is selected, we are looking for the "ad-hoc" report for the day, 
+        // If no team is selected, we are looking for the "ad-hoc" report for THIS user, 
         // which is characterized by having team_id IS NULL.
-        // We do NOT filter by technicianIds here because we want to append any new activity
-        // to the existing daily report for the company/day.
         query = query.is('team_id', null);
+        if (userId) {
+            query = query.eq('user_id', userId);
+        }
+        if (companyId) {
+            query = query.eq('company_id', companyId);
+        }
     }
 
     const { data, error } = await query.maybeSingle();
@@ -1143,6 +1158,7 @@ export const getDailyReportByTeamAndDate = async (teamId: string | null, date: s
         technicianIds: data.technician_ids,
         carPlate: data.car_plate,
         opecId: data.opec_id,
+        route: data.route,
         notes: data.notes,
         companyId: data.company_id,
         activities: data.daily_activities.map((a: any) => ({
@@ -1163,6 +1179,7 @@ export const upsertDailyReport = async (report: Omit<DailyReport, 'id'>, id?: st
         technician_ids: report.technicianIds,
         car_plate: report.carPlate,
         opec_id: report.opecId,
+        route: report.route,
         notes: report.notes,
         company_id: report.companyId
     };
@@ -1182,7 +1199,7 @@ export const upsertDailyReport = async (report: Omit<DailyReport, 'id'>, id?: st
                 if (report.teamId) {
                     query = query.eq('team_id', report.teamId);
                 } else {
-                    query = query.is('team_id', null);
+                    query = query.is('team_id', null).eq('user_id', report.userId);
                 }
                 const { data: existingData, error: fetchError } = await query.maybeSingle();
 

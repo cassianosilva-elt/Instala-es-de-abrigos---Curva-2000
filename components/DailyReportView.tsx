@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, DailyReport, DailyActivity, Team, UserRole, Absence, Vehicle, OpecDevice } from '../types';
 import { ACTIVITY_TYPES } from '../api/activityTypes';
-import { getTeams, getAllUsers, getDailyReportByTeamAndDate, upsertDailyReport, createAbsence, getAbsences, deleteAbsence, getVehicles, getOpecDevices } from '../api/fieldManagerApi';
+import { getTeams, getAllUsers, getDailyReportByTeamAndDate, upsertDailyReport, createAbsence, getAbsences, deleteAbsence, getVehicles, getOpecDevices, getDailyReports } from '../api/fieldManagerApi';
 import { ClipboardList, Users, Calendar, Plus, Save, History, X, AlertCircle, Download, Trash2, Car, Smartphone, Search } from 'lucide-react';
 import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumns, saveWorkbook } from '../utils/excelExport';
 
@@ -22,6 +22,7 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     const [report, setReport] = useState<Partial<DailyReport> | null>(null);
     const [selectedActivities, setSelectedActivities] = useState<DailyActivity[]>([]);
     const [absences, setAbsences] = useState<Absence[]>([]);
+    const [allDayReports, setAllDayReports] = useState<DailyReport[]>([]);
     const [isSaving, setIsSaving] = useState(false);
     const [isTechModalOpen, setIsTechModalOpen] = useState(false);
     const [techSearch, setTechSearch] = useState('');
@@ -77,16 +78,24 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     const loadReport = async () => {
         setLoading(true);
         try {
-            const data = await getDailyReportByTeamAndDate(
-                selectedTeam ? selectedTeam : null,
-                date,
-                selectedTeam ? undefined : selectedTechnicianIds
-            );
-            if (data) {
-                setReport(data);
-                setSelectedActivities(data.activities);
-                if (!selectedTeam && data.technicianIds) {
-                    setSelectedTechnicianIds(data.technicianIds);
+            const [reportData, companyReports] = await Promise.all([
+                getDailyReportByTeamAndDate(
+                    selectedTeam ? selectedTeam : null,
+                    date,
+                    selectedTeam ? undefined : selectedTechnicianIds,
+                    currentUser.id,
+                    currentUser.companyId
+                ),
+                getDailyReports(currentUser.companyId, undefined, date)
+            ]);
+
+            setAllDayReports(companyReports);
+
+            if (reportData) {
+                setReport(reportData);
+                setSelectedActivities(reportData.activities);
+                if (!selectedTeam && reportData.technicianIds) {
+                    setSelectedTechnicianIds(reportData.technicianIds);
                 }
             } else {
                 setReport({
@@ -186,6 +195,7 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                 activities: selectedActivities,
                 carPlate: report?.carPlate,
                 opecId: report?.opecId,
+                route: report?.route,
                 notes: report?.notes
             };
 
@@ -238,33 +248,40 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
             ? teams.find(t => t.id === selectedTeam)?.name || 'Equipe'
             : 'Equipe Personalizada';
 
-        // 1. Calculate all unique participants
+        // 1. Calculate all unique participants FROM ALL REPORTS OF THE DAY
         const participantIds = new Set<string>();
-        if (selectedTeam) {
-            teams.find(t => t.id === selectedTeam)?.technicianIds.forEach(id => participantIds.add(id));
-            const leaderId = teams.find(t => t.id === selectedTeam)?.leaderId;
-            if (leaderId) participantIds.add(leaderId);
-        }
-
-        selectedActivities.forEach(a => {
-            a.technicianIds?.forEach(tid => participantIds.add(tid));
+        allDayReports.forEach(r => {
+            if (r.teamId) {
+                const team = teams.find(t => t.id === r.teamId);
+                team?.technicianIds.forEach(id => participantIds.add(id));
+                if (team?.leaderId) participantIds.add(team.leaderId);
+            }
+            if (r.technicianIds) {
+                r.technicianIds.forEach(id => participantIds.add(id));
+            }
+            r.activities.forEach(a => {
+                a.technicianIds?.forEach(tid => participantIds.add(tid));
+            });
+            if (r.userId) participantIds.add(r.userId);
         });
 
         const participants = users.filter(u => participantIds.has(u.id));
 
         // 2. Info for header
-        const carInfo = vehicles.find(v => v.plate === report?.carPlate);
-        const opecInfo = opecDevices.find(o => o.id === report?.opecId);
+        // For Consolidated, we use the header of Sheet1 based on the first report or current selection,
+        // but rows will have their own metadata.
+        const currentCarInfo = vehicles.find(v => v.plate === report?.carPlate);
+        const currentOpecInfo = opecDevices.find(o => o.id === report?.opecId);
 
         // 3. Create Workbook and Sheets
         const { workbook, worksheet: wsActivities, startRow } = await createEletromidiaWorkbook(
-            `Relatório Diário - ${teamName}`,
+            `Relatório Diário Consolidado - ${date}`,
             'Atividades'
         );
 
         // --- SHEET 1: ATIVIDADES ---
         // Header row
-        const activitiesHeader = ['Data', 'Veículo', 'OPEC', 'Tipo de Atividade', 'Quantidade'];
+        const activitiesHeader = ['Data', 'Veículo', 'OPEC', 'Rota', 'Tipo de Atividade', 'Quantidade'];
         // Find max techs to add columns
         const maxTechs = selectedActivities.reduce((max, a) => Math.max(max, a.technicianIds?.length || 0), 0);
         for (let i = 0; i < Math.max(maxTechs, 1); i++) {
@@ -275,26 +292,32 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
         headerRow.values = activitiesHeader;
         styleHeaderRow(headerRow);
 
-        // Data rows
-        selectedActivities.forEach((a, idx) => {
-            const rowData = [
-                date,
-                carInfo ? `${carInfo.model} (${carInfo.plate})` : '',
-                opecInfo ? `${opecInfo.assetCode}` : '',
-                a.activityType,
-                a.quantity
-            ];
+        // Data rows - ALL REPORTS FOR THE DAY
+        allDayReports.forEach((r) => {
+            const rowCarInfo = vehicles.find(v => v.plate === r.carPlate);
+            const rowOpecInfo = opecDevices.find(o => o.id === r.opecId);
 
-            if (a.technicianIds && a.technicianIds.length > 0) {
-                a.technicianIds.forEach(tid => {
-                    const techName = users.find(u => u.id === tid)?.name || 'Desconhecido';
-                    rowData.push(techName);
-                });
-            } else {
-                rowData.push('Equipe Completa');
-            }
+            r.activities.forEach((a) => {
+                const rowData = [
+                    date,
+                    rowCarInfo ? `${rowCarInfo.model} (${rowCarInfo.plate})` : '',
+                    rowOpecInfo ? `${rowOpecInfo.assetCode}` : '',
+                    r.route || '',
+                    a.activityType,
+                    a.quantity
+                ];
 
-            wsActivities.addRow(rowData);
+                if (a.technicianIds && a.technicianIds.length > 0) {
+                    a.technicianIds.forEach(tid => {
+                        const techName = users.find(u => u.id === tid)?.name || 'Desconhecido';
+                        rowData.push(techName);
+                    });
+                } else {
+                    rowData.push('Equipe Completa');
+                }
+
+                wsActivities.addRow(rowData);
+            });
         });
 
         styleDataRows(wsActivities, startRow);
@@ -329,13 +352,15 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
         const summaryData = [
             ['Data', date],
             ['Equipe/Referência', teamName],
-            ['Veículo', carInfo ? `${carInfo.model} (${carInfo.plate})` : 'N/A'],
-            ['OPEC', opecInfo ? `${opecInfo.assetCode} - ${opecInfo.model}` : 'N/A'],
-            ['Total de Lançamentos', selectedActivities.length],
-            ['Total de Peças/Qtd', selectedActivities.reduce((acc, a) => acc + a.quantity, 0)],
+            ['Veículo (Principal)', currentCarInfo ? `${currentCarInfo.model} (${currentCarInfo.plate})` : 'N/A'],
+            ['OPEC (Principal)', currentOpecInfo ? `${currentOpecInfo.assetCode} - ${currentOpecInfo.model}` : 'N/A'],
+            ['Total de Lançamentos (Dia)', allDayReports.reduce((acc, r) => acc + r.activities.length, 0)],
+            ['Total de Peças/Qtd (Dia)', allDayReports.reduce((acc, r) => acc + r.activities.reduce((sum, a) => sum + a.quantity, 0), 0)],
+            ['Relatórios Consolidados', allDayReports.length],
             ['Participantes Únicos', participants.length],
             ['Ausências Registradas', absences.length],
-            ['Notas', report?.notes || '']
+            ['Rota', report?.route || ''],
+            ['Observação', report?.notes || '']
         ];
 
         summaryData.forEach(row => wsSummary.addRow(row));
@@ -515,10 +540,13 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                                     const techNames = activity.technicianIds?.map(tid => users.find(u => u.id === tid)?.name || 'Desconhecido').join(', ') || 'Equipe Completa';
 
                                     return (
-                                        <div key={index} className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                        <div key={`edit-${index}`} className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100 ring-2 ring-primary/10">
                                             <div className="flex-1">
                                                 <div className="flex items-center justify-between mb-1">
-                                                    <span className="text-xs font-black uppercase text-slate-700">{activity.activityType}</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] font-black px-2 py-0.5 bg-primary/10 text-primary rounded-full uppercase">Editando</span>
+                                                        <span className="text-xs font-black uppercase text-slate-700">{activity.activityType}</span>
+                                                    </div>
                                                     <button onClick={() => handleDeleteActivity(index)} className="text-red-400 hover:text-red-600 p-1">
                                                         <X size={14} />
                                                     </button>
@@ -539,6 +567,45 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                                         </div>
                                     );
                                 })
+                            )}
+
+                            {/* Mostrar atividades de OUTROS relatórios do mesmo dia */}
+                            {allDayReports.filter(r => r.id !== report?.id).length > 0 && (
+                                <div className="mt-8 space-y-3 pt-6 border-t border-slate-100">
+                                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Outros Lançamentos do Dia</h4>
+                                    {allDayReports
+                                        .filter(r => r.id !== report?.id)
+                                        .map(otherReport => {
+                                            const reporter = users.find(u => u.id === otherReport.userId);
+                                            const team = teams.find(t => t.id === otherReport.teamId);
+                                            const sourceName = team ? team.name : (reporter?.name || 'Desconhecido');
+
+                                            return otherReport.activities.map((activity, aIdx) => {
+                                                const techNames = activity.technicianIds?.map(tid => users.find(u => u.id === tid)?.name || 'Desconhecido').join(', ') || 'Equipe Completa';
+                                                return (
+                                                    <div key={`view-${otherReport.id}-${aIdx}`} className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-2xl border border-slate-100 opacity-60">
+                                                        <div className="flex-1">
+                                                            <div className="flex items-center justify-between mb-1">
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-[10px] font-black px-2 py-0.5 bg-slate-200 text-slate-500 rounded-full uppercase">{sourceName}</span>
+                                                                    <span className="text-xs font-black uppercase text-slate-400">{activity.activityType}</span>
+                                                                </div>
+                                                            </div>
+                                                            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mb-1 line-clamp-1">
+                                                                {techNames}
+                                                            </p>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-[9px] font-bold text-slate-300 uppercase">Qtd: {activity.quantity}</span>
+                                                                <span className="text-[9px] font-bold text-slate-300 uppercase px-2">|</span>
+                                                                <span className="text-[9px] font-bold text-slate-300 uppercase">Rota: {otherReport.route || 'N/A'}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            });
+                                        })
+                                    }
+                                </div>
                             )}
                         </div>
                     </div>
@@ -600,7 +667,17 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                     </div>
 
                     <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Notas do Dia</h3>
+                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Rota</h3>
+                        <input
+                            type="text"
+                            value={report?.route || ''}
+                            onChange={e => setReport(prev => ({ ...prev, route: e.target.value }))}
+                            disabled={!isToday && !isChief}
+                            placeholder="Digite a rota manualmente..."
+                            className="w-full p-4 mb-6 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-600 outline-none focus:ring-2 focus:ring-primary/20"
+                        />
+
+                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Observação</h3>
                         <textarea
                             value={report?.notes || ''}
                             onChange={e => setReport(prev => ({ ...prev, notes: e.target.value }))}
