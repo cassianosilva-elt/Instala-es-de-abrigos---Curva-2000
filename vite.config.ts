@@ -17,6 +17,8 @@ export default defineConfig(({ mode }) => {
         includeAssets: ['assets/logo_icon.png'],
         workbox: {
           maximumFileSizeToCacheInBytes: 5000000, // Increase limit to 5MB
+          skipWaiting: false,
+          clientsClaim: false,
         },
         manifest: {
           name: 'Eletromidia Field Manager',
@@ -39,7 +41,7 @@ export default defineConfig(({ mode }) => {
           ]
         },
         devOptions: {
-          enabled: true
+          enabled: false
         }
       })
     ],
