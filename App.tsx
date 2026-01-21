@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { User, UserRole, Task, TaskStatus, Team, ServiceType } from './types';
 import TechnicianView from './components/TechnicianView';
 import LeaderView from './components/LeaderView';
@@ -40,6 +40,7 @@ const App: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const currentUserIdRef = useRef<string | null>(null); // Track current user to avoid duplicate fetches
 
   // Background sync for offline evidence
   useOfflineSync(() => {
@@ -67,6 +68,7 @@ const App: React.FC = () => {
           return;
         }
 
+        currentUserIdRef.current = session.user.id;
         fetchProfile(session.user.id);
       } else {
         setLoading(false);
@@ -74,12 +76,27 @@ const App: React.FC = () => {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Ignore token refresh events to prevent unnecessary reloads
+      if (event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
+        console.log(`[Auth] ${event}, skipping reload`);
+        return;
+      }
+
       if (event === 'SIGNED_OUT' || !session) {
+        currentUserIdRef.current = null;
         setCurrentUser(null);
         setLoading(false);
         return;
       }
-      fetchProfile(session.user.id);
+
+      // Only fetch profile if user is not already loaded (using ref to avoid stale closure)
+      if (currentUserIdRef.current !== session.user.id) {
+        console.log('[Auth] New user detected, fetching profile...');
+        currentUserIdRef.current = session.user.id;
+        fetchProfile(session.user.id);
+      } else {
+        console.log('[Auth] User already loaded, skipping fetch');
+      }
     });
 
     return () => {
