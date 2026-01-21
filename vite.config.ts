@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         includeAssets: ['assets/logo_icon.png'],
         workbox: {
           maximumFileSizeToCacheInBytes: 5000000, // Increase limit to 5MB
