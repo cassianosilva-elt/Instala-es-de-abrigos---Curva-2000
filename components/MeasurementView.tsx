@@ -8,6 +8,10 @@ import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumn
 import { MeasurementAdminView } from './MeasurementAdminView';
 import { MeasurementPriceManager } from './MeasurementPriceManager';
 
+// Normalize category for comparison (removes accents, uppercase, trims)
+const normalizeCategory = (str: string) =>
+    str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+
 const ASSET_TYPES = [
     { id: 'totem', label: 'Totem', category: 'TOTEM' },
     { id: 'abrigo_caos_leve', label: 'Caos Leve', category: 'ABRIGO DE ÔNIBUS CAOS LEVE' },
@@ -111,6 +115,9 @@ export const MeasurementView: React.FC<{ currentUser: User }> = ({ currentUser }
 
     const loadPrices = async () => {
         const prices = await getMeasurementPrices(selectedCompany);
+        // Debug: Show unique categories in the loaded price list
+        const uniqueCategories = [...new Set(prices.map((p: any) => p.category))];
+        console.log(`[MeasurementView] Prices loaded for ${selectedCompany}. Unique categories:`, uniqueCategories);
         setCurrentPriceList(prices);
     };
 
@@ -564,15 +571,18 @@ export const MeasurementView: React.FC<{ currentUser: User }> = ({ currentUser }
                                                 const typeInfo = ASSET_TYPES.find(t => t.id === selectedAssetType);
                                                 if (!typeInfo) return false;
 
-                                                // Always show items matching the exact category
-                                                if (item.category === typeInfo.category) return true;
+                                                const normalizedItemCat = normalizeCategory(item.category || '');
+                                                const normalizedTypeCat = normalizeCategory(typeInfo.category);
+
+                                                // Always show items matching the exact category (normalized)
+                                                if (normalizedItemCat === normalizedTypeCat) return true;
 
                                                 // Special Rule: All Shelters (Abrigos) also include Totem items
-                                                if (selectedAssetType?.startsWith('abrigo') && item.category === 'TOTEM') return true;
+                                                if (selectedAssetType?.startsWith('abrigo') && normalizedItemCat === 'TOTEM') return true;
 
                                                 // Special Rule: Shared Panel Items
                                                 if ((selectedAssetType === 'painel_digital' || selectedAssetType === 'painel_estatico') &&
-                                                    item.category === 'PAINEL DIGITAL/ESTÁTICO') {
+                                                    normalizedItemCat === normalizeCategory('PAINEL DIGITAL/ESTÁTICO')) {
                                                     return true;
                                                 }
 
@@ -625,10 +635,12 @@ export const MeasurementView: React.FC<{ currentUser: User }> = ({ currentUser }
                                         {currentPriceList.filter(item => {
                                             const typeInfo = ASSET_TYPES.find(t => t.id === selectedAssetType);
                                             if (!typeInfo) return false;
-                                            if (item.category === typeInfo.category) return true;
-                                            if (selectedAssetType?.startsWith('abrigo') && item.category === 'TOTEM') return true;
+                                            const normalizedItemCat = normalizeCategory(item.category || '');
+                                            const normalizedTypeCat = normalizeCategory(typeInfo.category);
+                                            if (normalizedItemCat === normalizedTypeCat) return true;
+                                            if (selectedAssetType?.startsWith('abrigo') && normalizedItemCat === 'TOTEM') return true;
                                             if ((selectedAssetType === 'painel_digital' || selectedAssetType === 'painel_estatico') &&
-                                                item.category === 'PAINEL DIGITAL/ESTÁTICO') return true;
+                                                normalizedItemCat === normalizeCategory('PAINEL DIGITAL/ESTÁTICO')) return true;
                                             return false;
                                         }).length === 0 && (
                                                 <div className="col-span-full p-8 text-center bg-slate-50 rounded-3xl text-slate-400">
