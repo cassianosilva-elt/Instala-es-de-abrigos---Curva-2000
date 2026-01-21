@@ -154,6 +154,45 @@ export const bulkCreateTasks = async (tasks: any[]): Promise<void> => {
     if (error) throw error;
 };
 
+// --- GET TASKS BY COMPANY ---
+export const getTasksByCompanyId = async (companyId: string): Promise<Task[]> => {
+    // Map company select ID to actual company_id used in tasks
+    const companyIdMap: Record<string, string> = {
+        'gf1': 'gf1',
+        'alvares': 'alvares',
+        'bassi': 'bassi',
+        'afn_nogueira': 'afn_nogueira'
+    };
+
+    const actualCompanyId = companyIdMap[companyId] || companyId;
+
+    const { data: tasks, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('company_id', actualCompanyId)
+        .order('scheduled_date', { ascending: false });
+
+    if (error || !tasks) return [];
+
+    return tasks.map(t => ({
+        id: t.id,
+        assetId: t.asset_id,
+        asset: t.asset_json,
+        serviceType: t.service_type as ServiceType,
+        status: t.status as TaskStatus,
+        technicianId: t.technician_id,
+        leaderId: t.leader_id,
+        companyId: t.company_id,
+        scheduledDate: t.scheduled_date,
+        description: t.description,
+        startedAt: t.started_at ? new Date(t.started_at) : undefined,
+        completedAt: t.completed_at ? new Date(t.completed_at) : undefined,
+        blockingReason: t.blocking_reason,
+        notPerformedReason: t.not_performed_reason,
+        evidence: []
+    }));
+};
+
 // --- EVIDENCE ---
 
 export const completeTask = async (taskId: string, location: { lat: number, lng: number }): Promise<Task> => {
@@ -593,6 +632,7 @@ export const getMeasurementPrices = async (companyId: string): Promise<any[]> =>
     const mappedPrices = data.map(p => ({
         id: p.id,
         category: p.category,
+        itemCode: p.item_code,
         description: p.description,
         unit: p.unit,
         price: p.price
@@ -602,6 +642,7 @@ export const getMeasurementPrices = async (companyId: string): Promise<any[]> =>
     const missingTotemItem = {
         id: 'totem_instalacao_completa_fallback',
         category: 'TOTEM',
+        itemCode: 'FALLBACK',
         description: 'Instalação Completa de Totem, incluindo a execução do piso podotátil',
         unit: 'UN',
         price: 480.69
@@ -641,6 +682,7 @@ export const bulkUpdateMeasurementPrices = async (companyId: string, prices: any
         id: p.id,
         company_id: companyId,
         category: p.category,
+        item_code: p.itemCode,
         description: p.description,
         unit: p.unit,
         price: p.price,
@@ -1267,7 +1309,7 @@ export const upsertDailyReport = async (report: Omit<DailyReport, 'id'>, id?: st
 
 
 export const deleteAbsence = async (id: string): Promise<void> => {
-    const { error } = await supabase.from('employee_absences').delete().eq('id', id);
+    const { error } = await supabase.from('daily_absences').delete().eq('id', id);
     if (error) throw error;
 };
 
@@ -1279,8 +1321,26 @@ export const saveAssetMeasurement = async (measurement: AssetMeasurement): Promi
         asset_type: measurement.assetType,
         stages: measurement.stages,
         total_value: measurement.totalValue,
-        items_snapshot: measurement.itemsSnapshot || []
+        items_snapshot: measurement.itemsSnapshot || [],
+        edit_count: measurement.editCount || 0,
+        is_paid: measurement.isPaid || false
     });
+
+    if (error) throw error;
+};
+
+export const updateAssetMeasurement = async (id: string, measurement: Partial<AssetMeasurement>): Promise<void> => {
+    const updates: any = {};
+    if (measurement.stages) updates.stages = measurement.stages;
+    if (measurement.totalValue !== undefined) updates.total_value = measurement.totalValue;
+    if (measurement.itemsSnapshot) updates.items_snapshot = measurement.itemsSnapshot;
+    if (measurement.editCount !== undefined) updates.edit_count = measurement.editCount;
+    if (measurement.isPaid !== undefined) updates.is_paid = measurement.isPaid;
+
+    const { error } = await supabase
+        .from('asset_measurements')
+        .update(updates)
+        .eq('id', id);
 
     if (error) throw error;
 };
@@ -1289,31 +1349,48 @@ export const saveAssetMeasurement = async (measurement: AssetMeasurement): Promi
 
 // For partners - get measurements from their own company
 export const getAssetMeasurements = async (companyId: string): Promise<AssetMeasurement[]> => {
-    const { data, error } = await supabase
+    const { data: measurements, error } = await supabase
         .from('asset_measurements')
         .select(`
             *,
             profiles!technician_id(name),
-            assets!asset_id(code)
+            assets!asset_id(code, address)
         `)
         .eq('company_id', companyId)
         .order('created_at', { ascending: false });
 
-    if (error) return [];
+    if (error || !measurements) return [];
 
-    return data.map(m => ({
-        id: m.id,
-        assetId: m.asset_id,
-        technicianId: m.technician_id,
-        companyId: m.company_id,
-        assetType: m.asset_type,
-        stages: m.stages || [],
-        totalValue: m.total_value,
-        itemsSnapshot: m.items_snapshot || [],
-        createdAt: m.created_at,
-        technicianName: m.profiles?.name,
-        assetCode: m.assets?.code
-    }));
+    // Fallback logic for legacy measurements where asset_id is just the code
+    const { data: allAssets } = await supabase.from('assets').select('code, address');
+    const assetsByCode = new Map(allAssets?.map(a => [String(a.code).toLowerCase(), a.address]) || []);
+
+    return measurements.map(m => {
+        let assetCode = m.assets?.code;
+        let assetAddress = m.assets?.address;
+
+        // If join failed, try matching by m.asset_id as code
+        if (!assetAddress && m.asset_id) {
+            assetAddress = assetsByCode.get(String(m.asset_id).toLowerCase());
+        }
+
+        return {
+            id: m.id,
+            assetId: m.asset_id,
+            technicianId: m.technician_id,
+            companyId: m.company_id,
+            assetType: m.asset_type,
+            stages: m.stages || [],
+            totalValue: m.total_value,
+            itemsSnapshot: m.items_snapshot || [],
+            editCount: m.edit_count || 0,
+            isPaid: m.is_paid || false,
+            createdAt: m.created_at,
+            technicianName: m.profiles?.name,
+            assetCode: assetCode || m.asset_id, // Fallback to ID which might be the code
+            assetAddress: assetAddress
+        };
+    });
 };
 
 // For admin (internal) - get all measurements with optional company filter
@@ -1323,7 +1400,7 @@ export const getAllAssetMeasurements = async (filterCompanyId?: string): Promise
         .select(`
             *,
             profiles!technician_id(name),
-            assets!asset_id(code)
+            assets!asset_id(code, address)
         `)
         .order('created_at', { ascending: false });
 
@@ -1331,23 +1408,40 @@ export const getAllAssetMeasurements = async (filterCompanyId?: string): Promise
         query = query.eq('company_id', filterCompanyId);
     }
 
-    const { data, error } = await query;
+    const { data: measurements, error } = await query;
 
-    if (error) return [];
+    if (error || !measurements) return [];
 
-    return data.map(m => ({
-        id: m.id,
-        assetId: m.asset_id,
-        technicianId: m.technician_id,
-        companyId: m.company_id,
-        assetType: m.asset_type,
-        stages: m.stages || [],
-        totalValue: m.total_value,
-        itemsSnapshot: m.items_snapshot || [],
-        createdAt: m.created_at,
-        technicianName: m.profiles?.name,
-        assetCode: m.assets?.code
-    }));
+    // Fallback logic for legacy measurements where asset_id is just the code
+    const { data: allAssets } = await supabase.from('assets').select('code, address');
+    const assetsByCode = new Map(allAssets?.map(a => [String(a.code).toLowerCase(), a.address]) || []);
+
+    return measurements.map(m => {
+        let assetCode = m.assets?.code;
+        let assetAddress = m.assets?.address;
+
+        // If join failed, try matching by m.asset_id as code
+        if (!assetAddress && m.asset_id) {
+            assetAddress = assetsByCode.get(String(m.asset_id).toLowerCase());
+        }
+
+        return {
+            id: m.id,
+            assetId: m.asset_id,
+            technicianId: m.technician_id,
+            companyId: m.company_id,
+            assetType: m.asset_type,
+            stages: m.stages || [],
+            totalValue: m.total_value,
+            itemsSnapshot: m.items_snapshot || [],
+            editCount: m.edit_count || 0,
+            isPaid: m.is_paid || false,
+            createdAt: m.created_at,
+            technicianName: m.profiles?.name,
+            assetCode: assetCode || m.asset_id, // Fallback to ID which might be the code
+            assetAddress: assetAddress
+        };
+    });
 };
 
 // --- REGRA 4: Realtime Subscription para Live Feed ---
@@ -1405,4 +1499,45 @@ export const deleteDailyActivity = async (activityId: string): Promise<void> => 
 export const updateDailyActivityQuantity = async (activityId: string, quantity: number): Promise<void> => {
     const { error } = await supabase.from('daily_activities').update({ quantity }).eq('id', activityId);
     if (error) throw error;
+};
+
+export const deleteAssetMeasurement = async (measurementId: string): Promise<void> => {
+    const { error } = await supabase
+        .from('asset_measurements')
+        .delete()
+        .eq('id', measurementId);
+
+    if (error) throw error;
+};
+
+export const bulkDeleteAssetMeasurements = async (measurementIds: string[]): Promise<void> => {
+    const { error } = await supabase
+        .from('asset_measurements')
+        .delete()
+        .in('id', measurementIds);
+
+    if (error) throw error;
+};
+
+export const upsertAsset = async (asset: any): Promise<string> => {
+    // Identify by ID if possible, otherwise by code
+    const id = asset.id || `asset_${asset.code || Date.now()}`;
+
+    const dbAsset = {
+        id: id,
+        code: asset.code || id,
+        type: asset.type || 'Abrigo de Ônibus',
+        city: asset.city && asset.city !== 'null' ? asset.city : 'São Paulo',
+        address: asset.location?.address || asset.address || 'Endereço não informado',
+        lat: asset.location?.lat ?? asset.lat ?? -23.5505,
+        lng: asset.location?.lng ?? asset.lng ?? -46.6333,
+        company_id: asset.company_id || asset.companyId || 'internal'
+    };
+
+    const { error } = await supabase.from('assets').upsert(dbAsset, { onConflict: 'id' });
+    if (error) {
+        console.error('Error in upsertAsset:', error);
+        throw error;
+    }
+    return id;
 };

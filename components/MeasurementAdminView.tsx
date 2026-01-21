@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { AssetMeasurement, User } from '../types';
-import { getAllAssetMeasurements } from '../api/fieldManagerApi';
-import { Download, Building2, Filter, Calendar, TrendingUp, DollarSign, Search } from 'lucide-react';
+import { getAllAssetMeasurements, deleteAssetMeasurement, bulkDeleteAssetMeasurements } from '../api/fieldManagerApi';
+import { Download, Building2, Filter, Calendar, TrendingUp, DollarSign, Search, Trash2, Edit } from 'lucide-react';
 import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumns, saveWorkbook } from '../utils/excelExport';
 
 const PARTNER_COMPANIES = [
@@ -12,14 +12,16 @@ const PARTNER_COMPANIES = [
     { id: 'afn_nogueira', name: 'AFN Nogueira', color: '#7C3AED', logoUrl: '/assets/logo_afn_nogueira.png' }
 ];
 
-export const MeasurementAdminView: React.FC<{ currentUser: User }> = ({ currentUser }) => {
+export const MeasurementAdminView: React.FC<{ currentUser: User; onEdit?: (m: AssetMeasurement) => void }> = ({ currentUser, onEdit }) => {
     const [measurements, setMeasurements] = useState<AssetMeasurement[]>([]);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(true);
     const [selectedCompany, setSelectedCompany] = useState<string>('all');
     const [dateFilter, setDateFilter] = useState('');
 
     useEffect(() => {
         loadData();
+        setSelectedIds(new Set()); // Clear selection on company/filter change
     }, [selectedCompany]); // Reload when company filter changes
 
     const loadData = async () => {
@@ -27,6 +29,62 @@ export const MeasurementAdminView: React.FC<{ currentUser: User }> = ({ currentU
         const data = await getAllAssetMeasurements(selectedCompany);
         setMeasurements(data);
         setLoading(false);
+    };
+
+    const handleDelete = async (id: string, code: string) => {
+        if (window.confirm(`Tem certeza que deseja excluir a medição do ativo ${code}? Esta ação não pode ser desfeita.`)) {
+            try {
+                await deleteAssetMeasurement(id);
+                // Remove from local state immediately
+                setMeasurements(prev => prev.filter(m => m.id !== id));
+                setSelectedIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(id);
+                    return next;
+                });
+            } catch (error) {
+                console.error('Error deleting measurement:', error);
+                alert('Erro ao excluir medição.');
+            }
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        const count = selectedIds.size;
+        if (window.confirm(`Tem certeza que deseja excluir as ${count} medições selecionadas? Esta ação não pode ser desfeita.`)) {
+            try {
+                setLoading(true);
+                await bulkDeleteAssetMeasurements(Array.from(selectedIds));
+                setMeasurements(prev => prev.filter(m => !selectedIds.has(m.id || '')));
+                setSelectedIds(new Set());
+                alert(`${count} medições excluídas com sucesso.`);
+            } catch (error) {
+                console.error('Error in bulk delete:', error);
+                alert('Erro ao excluir medições em massa.');
+            } finally {
+                setLoading(false);
+            }
+        }
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.size === filteredMeasurements.length) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(filteredMeasurements.map(m => m.id || '')));
+        }
+    };
+
+    const toggleSelect = (id: string) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
     };
 
     const filteredMeasurements = useMemo(() => {
@@ -72,12 +130,16 @@ export const MeasurementAdminView: React.FC<{ currentUser: User }> = ({ currentU
         // Data
         filteredMeasurements.forEach(m => {
             const companyName = PARTNER_COMPANIES.find(c => c.id === m.companyId)?.name || m.companyId;
+            const stagesDisplay = m.itemsSnapshot && m.itemsSnapshot.length > 0
+                ? m.itemsSnapshot.map(item => item.itemCode || item.description).join(', ')
+                : m.stages.join(', ');
+
             const row = worksheet.addRow([
                 m.createdAt ? new Date(m.createdAt).toLocaleDateString('pt-BR') : '-',
                 companyName,
-                `${m.assetCode || m.assetId} - ${m.assetType}`,
+                `${m.assetCode || m.assetId} - ${m.assetAddress || 'Endereço não informado'}`,
                 m.assetType,
-                m.stages.join(', '),
+                stagesDisplay,
                 m.totalValue
             ]);
 
@@ -102,9 +164,24 @@ export const MeasurementAdminView: React.FC<{ currentUser: User }> = ({ currentU
         <div className="space-y-6 pb-20">
             {/* Header */}
             <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
-                <div>
-                    <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Medições Consolidadas</h2>
-                    <p className="text-sm text-slate-400 font-medium">Gestão financeira de serviços terceiros</p>
+                <div className="flex items-center gap-6">
+                    <div>
+                        <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Medições Consolidadas</h2>
+                        <p className="text-sm text-slate-400 font-medium">Gestão financeira de serviços terceiros</p>
+                    </div>
+
+                    {selectedIds.size > 0 && (
+                        <div className="flex items-center gap-4 bg-red-50 px-6 py-3 rounded-2xl border border-red-100 animate-in zoom-in duration-200">
+                            <span className="text-xs font-black text-red-600 uppercase tracking-widest">{selectedIds.size} selecionados</span>
+                            <button
+                                onClick={handleBulkDelete}
+                                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-colors shadow-lg shadow-red-200"
+                            >
+                                <Trash2 size={14} />
+                                Excluir
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex flex-wrap gap-3">
@@ -183,26 +260,43 @@ export const MeasurementAdminView: React.FC<{ currentUser: User }> = ({ currentU
                     <table className="w-full text-left border-collapse">
                         <thead>
                             <tr className="border-b border-slate-100">
+                                <th className="p-6 w-10">
+                                    <input
+                                        type="checkbox"
+                                        checked={filteredMeasurements.length > 0 && selectedIds.size === filteredMeasurements.length}
+                                        onChange={toggleSelectAll}
+                                        className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+                                    />
+                                </th>
                                 <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Data</th>
                                 <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Empresa</th>
                                 <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Ativo / Local</th>
                                 <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Serviço</th>
                                 <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Etapas</th>
                                 <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Valor</th>
+                                <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Ações</th>
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? (
                                 <tr>
-                                    <td colSpan={6} className="p-12 text-center text-slate-400 font-bold">Carregando dados...</td>
+                                    <td colSpan={8} className="p-12 text-center text-slate-400 font-bold">Carregando dados...</td>
                                 </tr>
                             ) : filteredMeasurements.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} className="p-12 text-center text-slate-400 font-bold">Nenhuma medição encontrada neste filtro.</td>
+                                    <td colSpan={8} className="p-12 text-center text-slate-400 font-bold">Nenhuma medição encontrada neste filtro.</td>
                                 </tr>
                             ) : (
                                 filteredMeasurements.map((m) => (
-                                    <tr key={m.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                    <tr key={m.id} className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors ${selectedIds.has(m.id || '') ? 'bg-primary/5' : ''}`}>
+                                        <td className="p-6">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.has(m.id || '')}
+                                                onChange={() => toggleSelect(m.id || '')}
+                                                className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+                                            />
+                                        </td>
                                         <td className="p-6 text-sm font-bold text-slate-600">
                                             {m.createdAt ? new Date(m.createdAt).toLocaleDateString() : '-'}
                                         </td>
@@ -220,7 +314,8 @@ export const MeasurementAdminView: React.FC<{ currentUser: User }> = ({ currentU
                                         <td className="p-6">
                                             <div className="flex flex-col">
                                                 <span className="text-sm font-black text-slate-900">{m.assetCode || m.assetId}</span>
-                                                <span className="text-xs font-bold text-slate-400">{m.assetType}</span>
+                                                <span className="text-[10px] font-bold text-slate-400 break-words max-w-[200px]">{m.assetAddress || 'Endereço não informado'}</span>
+                                                <span className="text-[10px] font-medium text-slate-300 uppercase mt-1">{m.assetType}</span>
                                             </div>
                                         </td>
                                         <td className="p-6 text-xs font-bold text-slate-600">
@@ -228,11 +323,19 @@ export const MeasurementAdminView: React.FC<{ currentUser: User }> = ({ currentU
                                         </td>
                                         <td className="p-6">
                                             <div className="flex flex-wrap gap-1">
-                                                {m.stages.map(s => (
-                                                    <span key={s} className="px-2 py-1 bg-slate-100 text-slate-500 rounded-md text-[10px] font-bold uppercase">
-                                                        {s}
-                                                    </span>
-                                                ))}
+                                                {m.itemsSnapshot && m.itemsSnapshot.length > 0 ? (
+                                                    m.itemsSnapshot.map((item, idx) => (
+                                                        <span key={idx} className="px-2 py-1 bg-slate-100 text-slate-500 rounded-md text-[10px] font-bold uppercase" title={item.description}>
+                                                            {item.itemCode || (item.description.length > 10 ? item.description.substring(0, 10) + '...' : item.description)}
+                                                        </span>
+                                                    ))
+                                                ) : (
+                                                    m.stages.map(s => (
+                                                        <span key={s} className="px-2 py-1 bg-slate-100 text-slate-500 rounded-md text-[10px] font-bold uppercase">
+                                                            {s}
+                                                        </span>
+                                                    ))
+                                                )}
                                             </div>
                                         </td>
                                         <td className="p-6 text-right">
@@ -242,6 +345,22 @@ export const MeasurementAdminView: React.FC<{ currentUser: User }> = ({ currentU
                                             {m.itemsSnapshot && m.itemsSnapshot.length > 0 && (
                                                 <p className="text-[10px] text-slate-400 font-bold mt-1">Snapshot OK</p>
                                             )}
+                                        </td>
+                                        <td className="p-6 text-right">
+                                            <button
+                                                onClick={() => onEdit?.(m)}
+                                                className="p-2 text-slate-400 hover:text-primary hover:bg-primary-50 rounded-xl transition-all mr-2"
+                                                title="Editar Medição"
+                                            >
+                                                <Edit size={16} />
+                                            </button>
+                                            <button
+                                                onClick={() => handleDelete(m.id || '', m.assetCode || m.assetId)}
+                                                className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                                                title="Excluir Medição"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
                                         </td>
                                     </tr>
                                 ))
@@ -253,3 +372,4 @@ export const MeasurementAdminView: React.FC<{ currentUser: User }> = ({ currentU
         </div>
     );
 };
+

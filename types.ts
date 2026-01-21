@@ -259,9 +259,11 @@ export interface DailyReport {
 
 export interface MeasurementItem {
   stage: string;
+  itemCode?: string;
   description: string;
   price: number;
   unit: string;
+  quantity: number;
 }
 
 export interface AssetMeasurement {
@@ -273,7 +275,10 @@ export interface AssetMeasurement {
   stages: string[];
   totalValue: number;
   itemsSnapshot?: MeasurementItem[];
+  editCount?: number;
+  isPaid?: boolean;
   createdAt?: string;
   technicianName?: string; // Hydrated for UI
   assetCode?: string; // Hydrated for UI
+  assetAddress?: string; // Hydrated for UI
 }

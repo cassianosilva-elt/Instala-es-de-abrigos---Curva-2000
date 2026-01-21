@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { Upload, X, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, ClipboardList, Eye, Search } from 'lucide-react';
+import { Upload, X, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, ClipboardList, Eye, Search, Building2 } from 'lucide-react';
 import SimpleModal from './SimpleModal';
 import { bulkCreateTasks, getAssets } from '../api/fieldManagerApi';
 import { User, TaskStatus, ServiceType, AssetType } from '../types';
+import { companyThemes } from '../contexts/ThemeContext';
 
 interface TaskImportModalProps {
     isOpen: boolean;
@@ -37,6 +38,7 @@ const TaskImportModal: React.FC<TaskImportModalProps> = ({ isOpen, onClose, onSu
     const [batchServiceType, setBatchServiceType] = useState<ServiceType>(ServiceType.PREVENTIVE);
     const [batchDate, setBatchDate] = useState<string>(new Date().toISOString().split('T')[0]);
     const [assetModel, setAssetModel] = useState<'SHELTER' | 'PANEL' | 'TOTEM'>('SHELTER');
+    const [selectedCompany, setSelectedCompany] = useState<string>(currentUser.companyId);
 
     // Preview State
     const [previewData, setPreviewData] = useState<ParsedTask[]>([]);
@@ -218,14 +220,8 @@ const TaskImportModal: React.FC<TaskImportModalProps> = ({ isOpen, onClose, onSu
                 const newTask = {
                     id: `task_${Date.now()}_${i}`,
                     asset_id: isSN ? 'SN' : assetCode,
-                    asset_json: asset ? {
-                        id: asset.id,
-                        code: asset.code,
-                        type: asset.type,
-                        location: asset.location,
-                        companyId: asset.companyId || currentUser.companyId
-                    } : {
-                        id: assetCode,
+                    asset_json: {
+                        id: asset ? asset.id : assetCode,
                         code: isSN ? 'SN' : assetCode,
                         type: assetType,
                         location: {
@@ -233,13 +229,13 @@ const TaskImportModal: React.FC<TaskImportModalProps> = ({ isOpen, onClose, onSu
                             lng: lng,
                             address: address || 'Endereço não informado'
                         },
-                        companyId: currentUser.companyId
+                        companyId: (asset && asset.companyId) || selectedCompany
                     },
                     service_type: batchServiceType,
                     status: TaskStatus.PENDING,
                     technician_id: null,
                     leader_id: currentUser.id,
-                    company_id: currentUser.companyId,
+                    company_id: selectedCompany,
                     scheduled_date: batchDate,
                     description: `Carga automática (${assetModel}): ${address}`,
                     created_at: new Date().toISOString()
@@ -306,7 +302,25 @@ const TaskImportModal: React.FC<TaskImportModalProps> = ({ isOpen, onClose, onSu
                         <ClipboardList size={14} />
                         Configurações do Lote:
                     </p>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-4 gap-4">
+                        {/* Company Selector - Only show for internal users */}
+                        {currentUser.companyId === 'internal' && (
+                            <div>
+                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Empresa</label>
+                                <select
+                                    value={selectedCompany}
+                                    onChange={(e) => {
+                                        setSelectedCompany(e.target.value);
+                                        if (file) analyzeFile(file);
+                                    }}
+                                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-800 text-xs outline-none focus:ring-2 focus:ring-primary/20"
+                                >
+                                    {Object.entries(companyThemes).map(([key, theme]) => (
+                                        <option key={key} value={key}>{theme.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                         <div>
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Modelo</label>
                             <select

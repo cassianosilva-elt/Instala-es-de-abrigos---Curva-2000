@@ -100,6 +100,25 @@ export const companyThemes: Record<string, CompanyTheme> = {
         secondary: '#FFFFFF',
         accent: '#22C55E',
     },
+    // AFNogueira - Purple/Violet
+    afnogueira: {
+        name: 'AFNogueira',
+        primary: '#7C3AED',
+        primaryShades: {
+            50: '#F5F3FF',
+            100: '#EDE9FE',
+            200: '#DDD6FE',
+            300: '#C4B5FD',
+            400: '#A78BFA',
+            500: '#7C3AED',
+            600: '#6D28D9',
+            700: '#5B21B6',
+            800: '#4C1D95',
+            900: '#2E1065',
+        },
+        secondary: '#FFFFFF',
+        accent: '#8B5CF6',
+    },
 };
 
 interface ThemeContextType {
