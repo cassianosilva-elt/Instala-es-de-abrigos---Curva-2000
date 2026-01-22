@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, DailyReport, DailyActivity, Team, UserRole, Absence, Vehicle, OpecDevice } from '../types';
 import { ACTIVITY_TYPES } from '../api/activityTypes';
-import { getTeams, getAllUsers, getDailyReportByTeamAndDate, upsertDailyReport, createAbsence, getAbsences, deleteAbsence, getVehicles, getOpecDevices, getDailyReports, subscribeToDailyActivities, deleteDailyActivity, updateDailyActivityQuantity } from '../api/fieldManagerApi';
+import { getTeams, getAllUsers, getDailyReportByTeamAndDate, upsertDailyReport, createAbsence, getAbsences, deleteAbsence, getVehicles, getOpecDevices, getDailyReports, getDailyReportsForMonth, subscribeToDailyActivities, deleteDailyActivity, updateDailyActivityQuantity } from '../api/fieldManagerApi';
 import { supabase } from '../api/supabaseClient';
 import { ClipboardList, Users, Calendar, Plus, Save, History, X, AlertCircle, Download, Trash2, Car, Smartphone, Search, CheckCircle } from 'lucide-react';
 import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumns, saveWorkbook } from '../utils/excelExport';
@@ -31,6 +31,10 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     const [vehicleSearch, setVehicleSearch] = useState('');
     const [isOpecModalOpen, setIsOpecModalOpen] = useState(false);
     const [opecSearch, setOpecSearch] = useState('');
+    const [isMonthModalOpen, setIsMonthModalOpen] = useState(false);
+    const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+    const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+    const [isExportingMonth, setIsExportingMonth] = useState(false);
 
     const isToday = useMemo(() => {
         const today = new Date().toISOString().split('T')[0];
@@ -164,7 +168,8 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                 activityType,
                 quantity: 1,
                 technicianIds: currentTechs,
-                // Generate a temp ID for UI distinction if needed, but not strictly required
+                carPlate: report?.carPlate,   // Captura veículo atual
+                opecId: report?.opecId,       // Captura OPEC atual
             }
         ]);
     };
@@ -317,15 +322,20 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
 
         // Data rows - ALL REPORTS FOR THE DAY
         allDayReports.forEach((r) => {
-            const rowCarInfo = vehicles.find(v => v.plate === r.carPlate);
-            const rowOpecInfo = opecDevices.find(o => o.id === r.opecId);
+            // Fallback: use report-level values if activity doesn't have them
+            const fallbackCarInfo = vehicles.find(v => v.plate === r.carPlate);
+            const fallbackOpecInfo = opecDevices.find(o => o.id === r.opecId);
 
             r.activities.forEach((a) => {
+                // Prioriza dados da atividade, com fallback para dados do relatório
+                const activityCarInfo = a.carPlate ? vehicles.find(v => v.plate === a.carPlate) : fallbackCarInfo;
+                const activityOpecInfo = a.opecId ? opecDevices.find(o => o.id === a.opecId) : fallbackOpecInfo;
+
                 // REGRA 3: Inclui liderName no Excel
                 const rowData: (string | number)[] = [
                     date,
-                    rowCarInfo ? `${rowCarInfo.model} (${rowCarInfo.plate})` : '',
-                    rowOpecInfo ? `${rowOpecInfo.assetCode}` : '',
+                    activityCarInfo ? `${activityCarInfo.model} (${activityCarInfo.plate})` : '',
+                    activityOpecInfo ? `${activityOpecInfo.assetCode}` : '',
                     r.route || '',
                     a.activityType,
                     a.quantity,
@@ -398,6 +408,180 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
         await saveWorkbook(workbook, fileName);
     };
 
+    const handleExportMonthlyExcel = async () => {
+        setIsExportingMonth(true);
+        try {
+            // Fetch all reports for the selected month
+            const monthReports = await getDailyReportsForMonth(currentUser.companyId, selectedYear, selectedMonth);
+
+            if (monthReports.length === 0) {
+                alert('Nenhum relatório encontrado para o mês selecionado.');
+                setIsExportingMonth(false);
+                return;
+            }
+
+            // Fetch absences for the month (with error handling in case table doesn't exist)
+            let monthAbsences: Absence[] = [];
+            try {
+                const allAbsences = await getAbsences(currentUser.companyId);
+                const startDate = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+                const lastDay = new Date(selectedYear, selectedMonth, 0).getDate();
+                const endDate = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+                monthAbsences = allAbsences.filter(a => a.date >= startDate && a.date <= endDate);
+            } catch (absenceError) {
+                console.warn('Could not fetch absences, continuing without them:', absenceError);
+            }
+
+            // Calculate all unique participants
+            const participantIds = new Set<string>();
+            let maxTechs = 0;
+
+            monthReports.forEach(r => {
+                if (r.teamId) {
+                    const team = teams.find(t => t.id === r.teamId);
+                    team?.technicianIds.forEach(id => participantIds.add(id));
+                    if (team?.leaderId) participantIds.add(team.leaderId);
+                }
+                if (r.technicianIds) {
+                    r.technicianIds.forEach(id => participantIds.add(id));
+                }
+                r.activities.forEach(a => {
+                    a.technicianIds?.forEach(tid => participantIds.add(tid));
+                    maxTechs = Math.max(maxTechs, a.technicianIds?.length || 0);
+                });
+                if (r.userId) participantIds.add(r.userId);
+            });
+
+            const participants = users.filter(u => participantIds.has(u.id));
+
+            // Month names in Portuguese
+            const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+            const monthName = monthNames[selectedMonth - 1];
+
+            // Create Workbook
+            const { workbook, worksheet: wsActivities, startRow } = await createEletromidiaWorkbook(
+                `Relatório Mensal Consolidado - ${monthName}/${selectedYear}`,
+                'Atividades'
+            );
+
+            // --- SHEET 1: ATIVIDADES ---
+            const activitiesHeader = ['Data', 'Veículo', 'OPEC', 'Rota', 'Tipo de Atividade', 'Quantidade', 'Líder Responsável', 'Observações'];
+            for (let i = 0; i < Math.max(maxTechs, 1); i++) {
+                activitiesHeader.push(`Técnico ${i + 1}`);
+            }
+
+            const headerRow = wsActivities.getRow(startRow);
+            headerRow.values = activitiesHeader;
+            styleHeaderRow(headerRow);
+
+            // Data rows - ALL REPORTS FOR THE MONTH
+            monthReports.forEach((r) => {
+                // Fallback: use report-level values if activity doesn't have them
+                const fallbackCarInfo = vehicles.find(v => v.plate === r.carPlate);
+                const fallbackOpecInfo = opecDevices.find(o => o.id === r.opecId);
+
+                r.activities.forEach((a) => {
+                    // Prioriza dados da atividade, com fallback para dados do relatório
+                    const activityCarInfo = a.carPlate ? vehicles.find(v => v.plate === a.carPlate) : fallbackCarInfo;
+                    const activityOpecInfo = a.opecId ? opecDevices.find(o => o.id === a.opecId) : fallbackOpecInfo;
+
+                    const rowData: (string | number)[] = [
+                        r.date,
+                        activityCarInfo ? `${activityCarInfo.model} (${activityCarInfo.plate})` : '',
+                        activityOpecInfo ? `${activityOpecInfo.assetCode}` : '',
+                        r.route || '',
+                        a.activityType,
+                        a.quantity,
+                        a.liderName || users.find(u => u.id === r.userId)?.name || 'Desconhecido',
+                        r.notes || ''
+                    ];
+
+                    if (a.technicianIds && a.technicianIds.length > 0) {
+                        a.technicianIds.forEach(tid => {
+                            const techName = users.find(u => u.id === tid)?.name || 'Desconhecido';
+                            rowData.push(techName);
+                        });
+                    } else {
+                        rowData.push('Equipe Completa');
+                    }
+
+                    wsActivities.addRow(rowData);
+                });
+            });
+
+            styleDataRows(wsActivities, startRow);
+            autoFitColumns(wsActivities);
+
+            // --- SHEET 2: RESUMO DIÁRIO ---
+            const wsDailySummary = workbook.addWorksheet('Resumo Diário');
+            const dailyHeader = ['Data', 'Relatórios', 'Total Lançamentos', 'Total Quantidade', 'Ausências'];
+            const dHeaderRow = wsDailySummary.getRow(1);
+            dHeaderRow.values = dailyHeader;
+            styleHeaderRow(dHeaderRow);
+
+            // Group by date
+            const dailyData = new Map<string, { reports: number; activities: number; quantity: number; absences: number }>();
+            monthReports.forEach(r => {
+                const current = dailyData.get(r.date) || { reports: 0, activities: 0, quantity: 0, absences: 0 };
+                current.reports += 1;
+                current.activities += r.activities.length;
+                current.quantity += r.activities.reduce((sum, a) => sum + a.quantity, 0);
+                dailyData.set(r.date, current);
+            });
+            monthAbsences.forEach(a => {
+                const current = dailyData.get(a.date) || { reports: 0, activities: 0, quantity: 0, absences: 0 };
+                current.absences += 1;
+                dailyData.set(a.date, current);
+            });
+
+            // Sort by date and add rows
+            Array.from(dailyData.entries())
+                .sort(([a], [b]) => a.localeCompare(b))
+                .forEach(([date, data]) => {
+                    wsDailySummary.addRow([date, data.reports, data.activities, data.quantity, data.absences]);
+                });
+
+            styleDataRows(wsDailySummary, 1);
+            autoFitColumns(wsDailySummary);
+
+            // --- SHEET 3: RESUMO MENSAL ---
+            const wsSummary = workbook.addWorksheet('Resumo Mensal');
+            const summaryHeader = ['Campo', 'Valor'];
+            const sHeaderRow = wsSummary.getRow(1);
+            sHeaderRow.values = summaryHeader;
+            styleHeaderRow(sHeaderRow);
+
+            const totalActivities = monthReports.reduce((acc, r) => acc + r.activities.length, 0);
+            const totalQuantity = monthReports.reduce((acc, r) => acc + r.activities.reduce((sum, a) => sum + a.quantity, 0), 0);
+            const uniqueDays = new Set(monthReports.map(r => r.date)).size;
+
+            const summaryData = [
+                ['Período', `${monthName}/${selectedYear}`],
+                ['Dias com Atividade', uniqueDays],
+                ['Total de Relatórios', monthReports.length],
+                ['Total de Lançamentos', totalActivities],
+                ['Total de Peças/Quantidade', totalQuantity],
+                ['Participantes Únicos', participants.length],
+                ['Total de Ausências', monthAbsences.length]
+            ];
+
+            summaryData.forEach(row => wsSummary.addRow(row));
+            styleDataRows(wsSummary, 1);
+            autoFitColumns(wsSummary);
+
+            // Save
+            const fileName = `Relatorio_Mensal_${monthName}_${selectedYear}`;
+            await saveWorkbook(workbook, fileName);
+            setIsMonthModalOpen(false);
+        } catch (err) {
+            console.error('Error exporting monthly report:', err);
+            alert('Erro ao exportar relatório mensal.');
+        } finally {
+            setIsExportingMonth(false);
+        }
+    };
+
     const teamMembers = useMemo(() => {
         if (selectedTeam) {
             const team = teams.find(t => t.id === selectedTeam);
@@ -409,9 +593,18 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     }, [selectedTeam, selectedTechnicianIds, teams, users]);
 
     const handleToggleTechnician = (techId: string) => {
-        setSelectedTechnicianIds(prev =>
-            prev.includes(techId) ? prev.filter(id => id !== techId) : [...prev, techId]
-        );
+        setSelectedTechnicianIds(prev => {
+            if (prev.includes(techId)) {
+                return prev.filter(id => id !== techId);
+            } else {
+                // Limit to maximum 4 team members
+                if (prev.length >= 4) {
+                    alert('Máximo de 4 membros de equipe permitidos no relatório diário.');
+                    return prev;
+                }
+                return [...prev, techId];
+            }
+        });
         if (selectedTeam) setSelectedTeam('');
     };
 
@@ -515,6 +708,13 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                         Exportar
                     </button>
 
+                    <button
+                        onClick={() => setIsMonthModalOpen(true)}
+                        className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-3 rounded-2xl font-black text-sm hover:bg-emerald-700 transition-all shadow-lg"
+                    >
+                        <Calendar size={18} />
+                        Exportar Mês
+                    </button>
                 </div>
             </div>
 
@@ -772,6 +972,15 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                                     </button>
                                 )}
                             </div>
+                            {selectedTechnicianIds.length > 0 && (
+                                <button
+                                    onClick={() => setSelectedTechnicianIds([])}
+                                    className="mt-3 w-full flex items-center justify-center gap-2 py-2 px-4 bg-red-50 border border-red-200 text-red-600 rounded-2xl text-xs font-black uppercase tracking-wide hover:bg-red-100 transition-colors"
+                                >
+                                    <X size={14} />
+                                    Desmarcar Todos ({selectedTechnicianIds.length})
+                                </button>
+                            )}
                         </div>
 
                         <div className="p-4 max-h-[400px] overflow-y-auto space-y-2">
@@ -962,6 +1171,85 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                                         )}
                                     </div>
                                 ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal de Seleção de Mês para Exportação */}
+            {isMonthModalOpen && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-200">
+                        <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                            <div>
+                                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tighter">Exportar Relatório Mensal</h3>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Consolidado de todos os dias do mês</p>
+                            </div>
+                            <button onClick={() => setIsMonthModalOpen(false)} className="p-2 hover:bg-white rounded-xl text-slate-400 transition-colors shadow-sm">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-6 space-y-6">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Mês</label>
+                                    <select
+                                        value={selectedMonth}
+                                        onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+                                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                                    >
+                                        <option value={1}>Janeiro</option>
+                                        <option value={2}>Fevereiro</option>
+                                        <option value={3}>Março</option>
+                                        <option value={4}>Abril</option>
+                                        <option value={5}>Maio</option>
+                                        <option value={6}>Junho</option>
+                                        <option value={7}>Julho</option>
+                                        <option value={8}>Agosto</option>
+                                        <option value={9}>Setembro</option>
+                                        <option value={10}>Outubro</option>
+                                        <option value={11}>Novembro</option>
+                                        <option value={12}>Dezembro</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Ano</label>
+                                    <select
+                                        value={selectedYear}
+                                        onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                                    >
+                                        {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                                            <option key={year} value={year}>{year}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl">
+                                <p className="text-xs font-bold text-emerald-700">
+                                    O relatório incluirá todas as atividades, ausências e resumos do mês selecionado em 3 abas: Atividades, Resumo Diário e Resumo Mensal.
+                                </p>
+                            </div>
+
+                            <button
+                                onClick={handleExportMonthlyExcel}
+                                disabled={isExportingMonth}
+                                className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-4 rounded-2xl font-black text-sm hover:bg-emerald-700 transition-all shadow-lg disabled:opacity-50"
+                            >
+                                {isExportingMonth ? (
+                                    <>
+                                        <History className="animate-spin" size={18} />
+                                        Gerando Relatório...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Download size={18} />
+                                        Exportar Relatório do Mês
+                                    </>
+                                )}
+                            </button>
                         </div>
                     </div>
                 </div>

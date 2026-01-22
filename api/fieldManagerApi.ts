@@ -1180,7 +1180,58 @@ export const getDailyReports = async (companyId: string, teamId?: string, date?:
             assetCodes: a.asset_codes,
             technicianIds: a.technician_ids,
             liderResponsavel: a.lider_responsavel,
-            liderName: a.lider_name
+            liderName: a.lider_name,
+            carPlate: a.car_plate,
+            opecId: a.opec_id
+        }))
+    }));
+};
+
+export const getDailyReportsForMonth = async (companyId: string, year: number, month: number): Promise<DailyReport[]> => {
+    // Calculate first and last day of the month
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month, 0).getDate(); // Gets last day of month
+    const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+    let query = supabase
+        .from('daily_reports')
+        .select('*, daily_activities(*)')
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: true });
+
+    if (companyId !== 'internal') {
+        query = query.eq('company_id', companyId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+        console.error('Error fetching monthly reports:', error);
+        return [];
+    }
+    if (!data) return [];
+
+    return data.map(r => ({
+        id: r.id,
+        date: r.date,
+        userId: r.user_id,
+        teamId: r.team_id,
+        technicianIds: r.technician_ids,
+        carPlate: r.car_plate,
+        opecId: r.opec_id,
+        route: r.route,
+        notes: r.notes,
+        companyId: r.company_id,
+        activities: (r.daily_activities || []).map((a: any) => ({
+            id: a.id,
+            activityType: a.activity_type,
+            quantity: a.quantity,
+            assetCodes: a.asset_codes,
+            technicianIds: a.technician_ids,
+            liderResponsavel: a.lider_responsavel,
+            liderName: a.lider_name,
+            carPlate: a.car_plate,
+            opecId: a.opec_id
         }))
     }));
 };
@@ -1233,7 +1284,9 @@ export const getDailyReportByTeamAndDate = async (
             assetCodes: a.asset_codes,
             technicianIds: a.technician_ids,
             liderResponsavel: a.lider_responsavel,
-            liderName: a.lider_name
+            liderName: a.lider_name,
+            carPlate: a.car_plate,
+            opecId: a.opec_id
         }))
     };
 };
@@ -1299,7 +1352,9 @@ export const upsertDailyReport = async (report: Omit<DailyReport, 'id'>, id?: st
                 asset_codes: a.assetCodes,
                 technician_ids: a.technicianIds,
                 lider_responsavel: report.userId,  // REGRA 3: Rastreabilidade
-                lider_name: a.liderName || null
+                lider_name: a.liderName || null,
+                car_plate: a.carPlate || null,     // Veículo específico da atividade
+                opec_id: a.opecId || null          // OPEC específico da atividade
             }));
             const { error: insertError } = await supabase.from('daily_activities').insert(activitiesData);
             if (insertError) throw insertError;

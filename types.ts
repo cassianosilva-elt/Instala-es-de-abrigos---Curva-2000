@@ -239,6 +239,8 @@ export interface DailyActivity {
   technicianIds?: string[]; // IDs of technicians who performed this specific activity
   liderResponsavel?: string;  // ID do líder que registrou (Regra 3)
   liderName?: string;         // Nome do líder (desnormalizado para performance)
+  carPlate?: string;          // Veículo usado nesta atividade
+  opecId?: string;            // OPEC usado nesta atividade
 }
 
 
