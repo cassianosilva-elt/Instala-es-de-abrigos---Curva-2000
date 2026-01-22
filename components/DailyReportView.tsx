@@ -102,14 +102,18 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     const loadReport = async () => {
         setLoading(true);
         try {
+            // Only fetch specific report if a team is selected OR specific technicians are selected
+            // This prevents auto-loading "custom" reports when just entering the screen
+            const shouldFetchSpecificReport = selectedTeam || selectedTechnicianIds.length > 0;
+
             const [reportData, companyReports] = await Promise.all([
-                getDailyReportByTeamAndDate(
+                shouldFetchSpecificReport ? getDailyReportByTeamAndDate(
                     selectedTeam ? selectedTeam : null,
                     date,
                     selectedTeam ? undefined : selectedTechnicianIds,
                     currentUser.id,
                     currentUser.companyId
-                ),
+                ) : Promise.resolve(null),
                 getDailyReports(currentUser.companyId, undefined, date)
             ]);
 
@@ -188,6 +192,26 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     };
 
 
+    const resetForm = () => {
+        setSelectedTeam('');
+        setSelectedTechnicianIds([]);
+        setSelectedActivities([]);
+        setReport({
+            date,
+            teamId: undefined,
+            technicianIds: undefined,
+            userId: currentUser.id,
+            companyId: currentUser.companyId,
+            activities: [],
+            // Mantém veículo e OPEC nulos para forçar nova seleção ou mudar se necessário
+            carPlate: undefined,
+            opecId: undefined,
+            route: '',
+            notes: ''
+        });
+        setAbsences([]);
+    };
+
     const handleSave = async () => {
         if (!selectedTeam && selectedTechnicianIds.length === 0 && selectedActivities.length === 0) {
             alert('Adicione atividades ou selecione técnicos.');
@@ -227,7 +251,15 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
             await upsertDailyReport(reportToSave, report?.id);
 
             alert('Relatório salvo com sucesso!');
-            loadReport();
+
+            // Fix: Reset form instead of reloading the same report ID
+            // This allows saving multiple reports for different teams/techs in the same day without overwriting
+            resetForm();
+
+            // Refresh the list of all reports for the day to show the new one in "Other Reports"
+            const dailyReports = await getDailyReports(currentUser.companyId, undefined, date);
+            setAllDayReports(dailyReports);
+
         } catch (err) {
             console.error('Error saving report:', err);
             alert('Erro ao salvar relatório.');
