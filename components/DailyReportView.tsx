@@ -54,7 +54,7 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
         if (date) {
             loadReport();
         }
-    }, [selectedTeam, date]);
+    }, [selectedTeam, selectedTechnicianIds, date]);
 
     // REGRA 4: Realtime subscription para Live Feed
     useEffect(() => {
@@ -143,7 +143,13 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                 ? (teams.find(t => t.id === selectedTeam)?.technicianIds || [])
                 : selectedTechnicianIds;
 
-            const dayAbsences = allAbsences.filter(a => a.date === date && reportTechIds.includes(a.employeeId));
+            const dayAbsences = allAbsences.filter(a => {
+                const isTechInReport = reportTechIds.includes(a.employeeId);
+                if (!isTechInReport) return false;
+                const start = a.date;
+                const end = a.endDate || a.date;
+                return date >= start && date <= end;
+            });
             setAbsences(dayAbsences);
 
         } catch (err) {
@@ -154,7 +160,10 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     };
 
     const handleAddActivity = (activityType: string) => {
-        if (!isToday && !isChief) return;
+        if (!isToday && !isChief) {
+            alert('Apenas chefes podem editar relatórios de datas passadas.');
+            return;
+        }
 
         // Verify if technicians are selected
         const currentTechs = selectedTeam
@@ -179,13 +188,19 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     };
 
     const handleDeleteActivity = (index: number) => {
-        if (!isToday && !isChief) return;
+        if (!isToday && !isChief) {
+            alert('Apenas chefes podem editar relatórios de datas passadas.');
+            return;
+        }
         setSelectedActivities(prev => prev.filter((_, i) => i !== index));
     };
 
     // Quantity change now needs index because we can have multiple of same type
     const handleQuantityChange = (index: number, quantity: number) => {
-        if (!isToday && !isChief) return;
+        if (!isToday && !isChief) {
+            alert('Apenas chefes podem editar relatórios de datas passadas.');
+            return;
+        }
         setSelectedActivities(prev => prev.map((a, i) =>
             i === index ? { ...a, quantity: Math.max(1, quantity) } : a
         ));
@@ -269,7 +284,10 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     };
 
     const handleAddAbsence = async (employeeId: string, reason: string) => {
-        if (!isToday && !isChief) return;
+        if (!isToday && !isChief) {
+            alert('Apenas chefes podem editar ausências de datas passadas.');
+            return;
+        }
         const employee = users.find(u => u.id === employeeId);
         if (!employee) return;
 
@@ -288,7 +306,10 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     };
 
     const handleDeleteAbsence = async (id: string) => {
-        if (!isToday && !isChief) return;
+        if (!isToday && !isChief) {
+            alert('Apenas chefes podem remover ausências de datas passadas.');
+            return;
+        }
         if (!confirm('Tem certeza que deseja remover esta falta?')) return;
 
         try {
@@ -452,14 +473,19 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                 return;
             }
 
+            const startDate = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+            const lastDay = new Date(selectedYear, selectedMonth, 0).getDate();
+            const endDate = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
             // Fetch absences for the month (with error handling in case table doesn't exist)
             let monthAbsences: Absence[] = [];
             try {
                 const allAbsences = await getAbsences(currentUser.companyId);
-                const startDate = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
-                const lastDay = new Date(selectedYear, selectedMonth, 0).getDate();
-                const endDate = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-                monthAbsences = allAbsences.filter(a => a.date >= startDate && a.date <= endDate);
+                monthAbsences = allAbsences.filter(a => {
+                    const start = a.date;
+                    const end = a.endDate || a.date;
+                    return start <= endDate && end >= startDate;
+                });
             } catch (absenceError) {
                 console.warn('Could not fetch absences, continuing without them:', absenceError);
             }
@@ -562,9 +588,13 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                 dailyData.set(r.date, current);
             });
             monthAbsences.forEach(a => {
-                const current = dailyData.get(a.date) || { reports: 0, activities: 0, quantity: 0, absences: 0 };
-                current.absences += 1;
-                dailyData.set(a.date, current);
+                // If absence is a range, we should ideally mark all days in the range that fall within this month
+                // For simplicity in this summary, we'll at least count it for the start date if it's in this month
+                if (a.date >= startDate && a.date <= endDate) {
+                    const current = dailyData.get(a.date) || { reports: 0, activities: 0, quantity: 0, absences: 0 };
+                    current.absences += 1;
+                    dailyData.set(a.date, current);
+                }
             });
 
             // Sort by date and add rows
@@ -920,8 +950,8 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
 
                                         {absence ? (
                                             <div className="flex items-center gap-2">
-                                                <span className="text-[8px] font-black uppercase px-2 py-1 bg-red-100 text-red-600 rounded-md">
-                                                    AUSENTE: {absence.reason}
+                                                <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-md ${absence.reason === 'Férias' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-600'}`}>
+                                                    {absence.reason === 'Férias' ? 'EM FÉRIAS' : absence.reason === 'Afastamento' ? 'AFASTADO' : `AUSENTE: ${absence.reason}`}
                                                 </span>
                                                 <button
                                                     onClick={() => handleDeleteAbsence(absence.id!)}

@@ -21,8 +21,9 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
     const [absences, setAbsences] = useState<Absence[]>([]);
     const [isAbsenceModalOpen, setIsAbsenceModalOpen] = useState(false);
     const [selectedEmployeeForAbsence, setSelectedEmployeeForAbsence] = useState<Employee | null>(null);
-    const [absenceForm, setAbsenceForm] = useState<{ date: string; reason: string; description: string; evidenceFile: File | null; evidenceUrl: string }>({
+    const [absenceForm, setAbsenceForm] = useState<{ date: string; endDate?: string; reason: string; description: string; evidenceFile: File | null; evidenceUrl: string }>({
         date: new Date().toISOString().split('T')[0],
+        endDate: new Date().toISOString().split('T')[0],
         reason: 'Falta Injustificada',
         description: '',
         evidenceFile: null,
@@ -109,6 +110,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
         setSelectedEmployeeForAbsence(employee);
         setAbsenceForm({
             date: new Date().toISOString().split('T')[0],
+            endDate: new Date().toISOString().split('T')[0],
             reason: 'Falta Injustificada',
             description: '',
             evidenceFile: null,
@@ -135,10 +137,17 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
                 evidenceUrl = await uploadAbsenceEvidence(absenceForm.evidenceFile);
             }
 
+            // Regra: se o funcionário está pendente, o ID dele é do convite, não do auth.users.
+            // O backend espera employee_id UUID referencing auth.users.
+            // Para funcionários pendentes, enviamos como nulo para evitar erro de FK, 
+            // mas o employee_name e company_id garantem a rastreabilidade.
+            const employeeId = selectedEmployeeForAbsence.status === 'ACTIVE' ? selectedEmployeeForAbsence.id : undefined;
+
             await createAbsence({
-                employeeId: selectedEmployeeForAbsence.id,
+                employeeId,
                 employeeName: selectedEmployeeForAbsence.name,
                 date: absenceForm.date,
+                endDate: (absenceForm.reason === 'Férias' || absenceForm.reason === 'Afastamento') ? absenceForm.endDate : absenceForm.date,
                 reason: absenceForm.reason as any,
                 description: absenceForm.description,
                 companyId: currentUser.companyId,
@@ -147,14 +156,31 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
             alert('Ausência registrada com sucesso!');
             setIsAbsenceModalOpen(false);
             loadAbsences();
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error creating absence:', err);
-            alert('Erro ao registrar ausência.');
+            if (err.code === '23505') {
+                alert('Erro: Já existe uma ausência registrada para este colaborador neste período.');
+            } else {
+                alert('Erro ao registrar ausência: ' + (err.message || 'Erro desconhecido'));
+            }
         } finally {
             setLoading(false);
         }
     };
 
+
+    const getEmployeeActiveAbsence = (employee: Employee) => {
+        const today = new Date().toISOString().split('T')[0];
+        return absences.find(a => {
+            const matchesId = a.employeeId && a.employeeId === employee.id;
+            const matchesName = (!a.employeeId || a.employeeId === null) && a.employeeName === employee.name;
+            if (!matchesId && !matchesName) return false;
+
+            const start = a.date;
+            const end = a.endDate || a.date;
+            return today >= start && today <= end;
+        });
+    };
 
     const loadEmployees = async () => {
         setLoading(true);
@@ -227,8 +253,12 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
         // Data rows
         filteredAbsences.forEach(a => {
             const employee = employees.find(e => e.id === a.employeeId);
+            const dateStr = a.endDate && a.endDate !== a.date
+                ? `${new Date(a.date).toLocaleDateString('pt-BR')} - ${new Date(a.endDate).toLocaleDateString('pt-BR')}`
+                : new Date(a.date).toLocaleDateString('pt-BR');
+
             worksheet.addRow([
-                new Date(a.date).toLocaleDateString('pt-BR'),
+                dateStr,
                 a.employeeName,
                 employee?.code || '-',
                 employee?.role.replace('PARCEIRO_', '').replace('_', ' ') || '-',
@@ -641,31 +671,41 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
                                             <div className="flex items-center gap-3">
                                                 <div className="relative">
                                                     <img src={employee.avatar} alt={employee.name} className="w-8 h-8 rounded-full bg-slate-200 object-cover border border-white shadow-sm" />
-                                                    {employee.status === 'ACTIVE' ? (
-                                                        <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-white rounded-full" title="Ativo" />
-                                                    ) : (
-                                                        <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-amber-500 border-2 border-white rounded-full animate-pulse" title="Convite Pendente" />
-                                                    )}
+                                                    {(() => {
+                                                        const activeAbsence = getEmployeeActiveAbsence(employee);
+                                                        if (activeAbsence) {
+                                                            const colorClass = activeAbsence.reason === 'Férias' ? 'bg-blue-500' : activeAbsence.reason === 'Afastamento' ? 'bg-orange-500' : 'bg-red-500';
+                                                            return <div className={`absolute -bottom-1 -right-1 w-3 h-3 ${colorClass} border-2 border-white rounded-full`} title={activeAbsence.reason} />;
+                                                        }
+                                                        if (employee.status === 'ACTIVE') {
+                                                            return <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-white rounded-full" title="Ativo" />;
+                                                        }
+                                                        return <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-amber-500 border-2 border-white rounded-full animate-pulse" title="Convite Pendente" />;
+                                                    })()}
                                                 </div>
                                                 <div>
                                                     <div className="flex items-center gap-2">
                                                         <span className="font-bold text-slate-700 text-sm block">{employee.name}</span>
-                                                        {absences.filter(a => a.employeeId === employee.id && a.date === new Date().toISOString().split('T')[0]).map(a => (
-                                                            <div key={a.id} className="flex items-center gap-1">
-                                                                <span className="bg-red-100 text-red-700 rounded-full text-[8px] font-black px-1.5 py-0.5 uppercase tracking-tighter">
-                                                                    Ausente
-                                                                </span>
-                                                                {a.evidenceUrl && (
-                                                                    <button
-                                                                        onClick={() => setSelectedEvidenceUrl(a.evidenceUrl!)}
-                                                                        className="p-0.5 text-red-400 hover:text-red-600 transition-colors"
-                                                                        title="Ver comprovante"
-                                                                    >
-                                                                        <Eye size={12} />
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                        ))}
+                                                        {(() => {
+                                                            const a = getEmployeeActiveAbsence(employee);
+                                                            if (!a) return null;
+                                                            return (
+                                                                <div key={a.id} className="flex items-center gap-1">
+                                                                    <span className="bg-red-100 text-red-700 rounded-full text-[8px] font-black px-1.5 py-0.5 uppercase tracking-tighter">
+                                                                        {a.reason === 'Férias' ? 'Em Férias' : a.reason === 'Afastamento' ? 'Afastado' : 'Ausente'}
+                                                                    </span>
+                                                                    {a.evidenceUrl && (
+                                                                        <button
+                                                                            onClick={() => setSelectedEvidenceUrl(a.evidenceUrl!)}
+                                                                            className="p-0.5 text-red-400 hover:text-red-600 transition-colors"
+                                                                            title="Ver comprovante"
+                                                                        >
+                                                                            <Eye size={12} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </div>
                                                     <span className="text-[10px] text-slate-400 block">{employee.email}</span>
                                                 </div>
@@ -677,11 +717,25 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
                                             </span>
                                         </td>
                                         <td className="p-4 text-xs font-medium text-slate-500">
-                                            {employee.originalStatus && (
-                                                <span className={`px-2 py-1 rounded-md uppercase text-[10px] font-bold tracking-wider ${employee.originalStatus.includes('afastado') ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
-                                                    {employee.originalStatus}
-                                                </span>
-                                            )}
+                                            {(() => {
+                                                const activeAbsence = getEmployeeActiveAbsence(employee);
+                                                if (activeAbsence) {
+                                                    const colorClass = activeAbsence.reason === 'Férias' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600';
+                                                    return (
+                                                        <span className={`px-2 py-1 rounded-md uppercase text-[10px] font-bold tracking-wider ${colorClass}`}>
+                                                            {activeAbsence.reason}
+                                                        </span>
+                                                    );
+                                                }
+                                                if (employee.originalStatus) {
+                                                    return (
+                                                        <span className={`px-2 py-1 rounded-md uppercase text-[10px] font-bold tracking-wider ${employee.originalStatus.includes('afastado') ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+                                                            {employee.originalStatus}
+                                                        </span>
+                                                    );
+                                                }
+                                                return <span className="text-slate-300">-</span>;
+                                            })()}
                                         </td>
                                         <td className="p-4 text-right">
                                             <div className="flex items-center justify-end gap-2">
@@ -799,19 +853,38 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
                                     <option value="Day Off">Day Off</option>
                                     <option value="Atestado">Atestado</option>
                                     <option value="Banco de Horas">Banco de Horas</option>
+                                    <option value="Férias">Férias</option>
+                                    <option value="Afastamento">Afastamento</option>
                                     <option value="Outros">Outros</option>
                                 </select>
                             </div>
 
-                            <div>
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Data</label>
-                                <input
-                                    type="date"
-                                    required
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
-                                    value={absenceForm.date}
-                                    onChange={e => setAbsenceForm({ ...absenceForm, date: e.target.value })}
-                                />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                                        {(absenceForm.reason === 'Férias' || absenceForm.reason === 'Afastamento') ? 'Data Início' : 'Data'}
+                                    </label>
+                                    <input
+                                        type="date"
+                                        required
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                        value={absenceForm.date}
+                                        onChange={e => setAbsenceForm({ ...absenceForm, date: e.target.value })}
+                                    />
+                                </div>
+                                {(absenceForm.reason === 'Férias' || absenceForm.reason === 'Afastamento') && (
+                                    <div className="animate-in slide-in-from-left-2">
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Data Fim</label>
+                                        <input
+                                            type="date"
+                                            required
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                                            value={absenceForm.endDate}
+                                            onChange={e => setAbsenceForm({ ...absenceForm, endDate: e.target.value })}
+                                            min={absenceForm.date}
+                                        />
+                                    </div>
+                                )}
                             </div>
 
                             <div>
@@ -844,9 +917,11 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({ currentUser }) => 
 
                             <button
                                 type="submit"
-                                className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-red-200 transition-all active:scale-95"
+                                disabled={loading}
+                                className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-red-200 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
-                                Confirmar Ausência
+                                {loading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
+                                {loading ? 'Registrando...' : 'Confirmar Ausência'}
                             </button>
                         </form>
                     </div>

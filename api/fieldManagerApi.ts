@@ -753,9 +753,10 @@ export const bulkCreateEmployees = async (employees: Omit<Employee, 'id' | 'stat
 
 export const createAbsence = async (absence: Omit<Absence, 'id'>): Promise<void> => {
     const { error } = await supabase.from('daily_absences').insert({
-        employee_id: absence.employeeId || null, // Can be null for pending employees
+        employee_id: absence.employeeId || null,
         employee_name: absence.employeeName,
         date: absence.date,
+        end_date: absence.endDate || absence.date,
         reason: absence.reason,
         notes: absence.description,
         company_id: absence.companyId,
@@ -777,6 +778,7 @@ export const getAbsences = async (companyId: string): Promise<Absence[]> => {
         employeeId: item.employee_id,
         employeeName: item.employee_name,
         date: item.date,
+        endDate: item.end_date,
         reason: item.reason,
         description: item.notes,
         companyId: item.company_id,
@@ -1252,13 +1254,17 @@ export const getDailyReportByTeamAndDate = async (
         query = query.eq('team_id', teamId);
     } else {
         // If no team is selected, we are looking for the "ad-hoc" report for THIS user, 
-        // which is characterized by having team_id IS NULL.
+        // specifically for the requested set of technicians.
         query = query.is('team_id', null);
         if (userId) {
             query = query.eq('user_id', userId);
         }
         if (companyId) {
             query = query.eq('company_id', companyId);
+        }
+        if (technicianIds && technicianIds.length > 0) {
+            // Sort IDs to ensure consistent matching regardless of selection order
+            query = query.eq('technician_ids', [...technicianIds].sort());
         }
     }
 
@@ -1296,7 +1302,8 @@ export const upsertDailyReport = async (report: Omit<DailyReport, 'id'>, id?: st
         date: report.date,
         user_id: report.userId,
         team_id: report.teamId,
-        technician_ids: report.technicianIds,
+        // Sort IDs before saving to ensure consistent lookup later
+        technician_ids: report.technicianIds ? [...report.technicianIds].sort() : null,
         car_plate: report.carPlate,
         opec_id: report.opecId,
         route: report.route,
@@ -1320,6 +1327,9 @@ export const upsertDailyReport = async (report: Omit<DailyReport, 'id'>, id?: st
                     query = query.eq('team_id', report.teamId);
                 } else {
                     query = query.is('team_id', null).eq('user_id', report.userId);
+                    if (report.technicianIds && report.technicianIds.length > 0) {
+                        query = query.eq('technician_ids', [...report.technicianIds].sort());
+                    }
                 }
                 const { data: existingData, error: fetchError } = await query.maybeSingle();
 

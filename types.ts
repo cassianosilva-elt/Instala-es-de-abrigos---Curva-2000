@@ -186,10 +186,11 @@ export interface ChatConversation {
 
 export interface Absence {
   id: string;
-  employeeId: string;
+  employeeId?: string | null;
   employeeName: string;
   date: string;
-  reason: 'Falta Injustificada' | 'Falta Justificada' | 'Day Off' | 'Atestado' | 'Banco de Horas' | 'Outros';
+  endDate?: string;
+  reason: 'Falta Injustificada' | 'Falta Justificada' | 'Day Off' | 'Atestado' | 'Banco de Horas' | 'Férias' | 'Afastamento' | 'Outros';
   description?: string;
   companyId: string;
   evidenceUrl?: string;
