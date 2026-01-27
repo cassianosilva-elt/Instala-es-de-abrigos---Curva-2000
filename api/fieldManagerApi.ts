@@ -1147,7 +1147,11 @@ export const getAuditLogs = async (tableName: string, recordId: string): Promise
 // --- DAILY REPORTS ---
 
 export const getDailyReports = async (companyId: string, teamId?: string, date?: string): Promise<DailyReport[]> => {
-    let query = supabase.from('daily_reports').select('*, daily_activities(*)').order('date', { ascending: false });
+    let query = supabase.from('daily_reports')
+        .select('*, daily_activities(*)')
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: true })
+        .order('created_at', { foreignTable: 'daily_activities', ascending: true });
 
     if (companyId !== 'internal') {
         query = query.eq('company_id', companyId);
@@ -1200,7 +1204,9 @@ export const getDailyReportsForMonth = async (companyId: string, year: number, m
         .select('*, daily_activities(*)')
         .gte('date', startDate)
         .lte('date', endDate)
-        .order('date', { ascending: true });
+        .order('date', { ascending: true })
+        .order('created_at', { ascending: true })
+        .order('created_at', { foreignTable: 'daily_activities', ascending: true });
 
     if (companyId !== 'internal') {
         query = query.eq('company_id', companyId);
@@ -1248,7 +1254,8 @@ export const getDailyReportByTeamAndDate = async (
     let query = supabase
         .from('daily_reports')
         .select('*, daily_activities(*)')
-        .eq('date', date);
+        .eq('date', date)
+        .order('created_at', { foreignTable: 'daily_activities', ascending: true });
 
     if (teamId) {
         query = query.eq('team_id', teamId);
