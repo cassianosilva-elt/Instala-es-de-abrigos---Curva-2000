@@ -1,15 +1,16 @@
 import React, { useState, useRef } from 'react';
+import { useUser } from '@clerk/clerk-react';
 import { User } from '../types';
 import { X, Camera, Loader2, Save, User as UserIcon } from 'lucide-react';
-import { updateUserProfile, uploadAvatar } from '../api/fieldManagerApi';
 
 interface ProfileSettingsProps {
     user: User;
     onClose: () => void;
-    onUpdate: (updatedUser: User) => void;
+    onUpdate: () => void;
 }
 
 export const ProfileSettings: React.FC<ProfileSettingsProps> = ({ user, onClose, onUpdate }) => {
+    const { user: clerkUser } = useUser();
     const [name, setName] = useState(user.name);
     const [avatarUrl, setAvatarUrl] = useState(user.avatar);
     const [loading, setLoading] = useState(false);
@@ -19,16 +20,16 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({ user, onClose,
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        if (!file) return;
+        if (!file || !clerkUser) return;
 
         // Simple validation
         if (!file.type.startsWith('image/')) {
-            setError('Por favor, selecione uma imagem válida.');
+            setError('Por favor, selecione uma imagem valida.');
             return;
         }
 
         if (file.size > 2 * 1024 * 1024) {
-            setError('A imagem deve ter no máximo 2MB.');
+            setError('A imagem deve ter no maximo 2MB.');
             return;
         }
 
@@ -36,8 +37,10 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({ user, onClose,
         setError(null);
 
         try {
-            const url = await uploadAvatar(user.id, file);
-            setAvatarUrl(url);
+            // Upload image to Clerk
+            await clerkUser.setProfileImage({ file });
+            // Get the new image URL
+            setAvatarUrl(clerkUser.imageUrl);
         } catch (err: any) {
             console.error('Error uploading avatar:', err);
             setError('Erro ao fazer upload da imagem.');
@@ -48,7 +51,12 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({ user, onClose,
 
     const handleSave = async () => {
         if (!name.trim()) {
-            setError('O nome não pode estar vazio.');
+            setError('O nome nao pode estar vazio.');
+            return;
+        }
+
+        if (!clerkUser) {
+            setError('Usuario nao encontrado.');
             return;
         }
 
@@ -56,15 +64,20 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({ user, onClose,
         setError(null);
 
         try {
-            const updatedUser = await updateUserProfile(user.id, {
-                name: name.trim(),
-                avatar: avatarUrl
+            // Update Clerk user metadata
+            await clerkUser.update({
+                unsafeMetadata: {
+                    ...clerkUser.unsafeMetadata,
+                    name: name.trim(),
+                    avatar: avatarUrl,
+                }
             });
-            onUpdate(updatedUser);
+            
+            onUpdate();
             onClose();
         } catch (err: any) {
             console.error('Error updating profile:', err);
-            setError('Erro ao salvar as alterações.');
+            setError('Erro ao salvar as alteracoes.');
         } finally {
             setLoading(false);
         }
@@ -120,8 +133,8 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({ user, onClose,
                             />
                         </div>
                         <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">
-                            Toque no ícone para alterar sua foto<br />
-                            <span className="opacity-50">(Sugestão: Quadrada, máx 2MB)</span>
+                            Toque no icone para alterar sua foto<br />
+                            <span className="opacity-50">(Sugestao: Quadrada, max 2MB)</span>
                         </p>
                     </div>
 
@@ -141,7 +154,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({ user, onClose,
                         </div>
 
                         <div className="space-y-3 opacity-50">
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-2">E-mail (Não editável)</label>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-2">E-mail (Nao editavel)</label>
                             <div className="w-full px-6 py-5 rounded-[24px] bg-slate-100 font-bold text-slate-500 text-sm">
                                 {user.email}
                             </div>
@@ -161,7 +174,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({ user, onClose,
                         className="w-full py-6 rounded-[24px] bg-primary text-white font-black text-xs uppercase tracking-[0.3em] shadow-2xl shadow-primary/25 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-4 disabled:opacity-50"
                     >
                         {loading ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                        {loading ? 'Salvando...' : 'Salvar Alterações'}
+                        {loading ? 'Salvando...' : 'Salvar Alteracoes'}
                     </button>
                 </div>
             </div>

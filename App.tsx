@@ -1,6 +1,7 @@
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { User, UserRole, Task, TaskStatus, Team, ServiceType } from './types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useUser, useClerk } from '@clerk/clerk-react';
+import { User, UserRole, Task, Team } from './types';
 import TechnicianView from './components/TechnicianView';
 import LeaderView from './components/LeaderView';
 import ChiefView from './components/ChiefView';
@@ -12,7 +13,6 @@ import { ChatWidget } from './components/ChatWidget';
 import Login from './components/Login';
 import { ProfileSettings } from './components/ProfileSettings';
 import { NotificationCenter } from './components/NotificationCenter';
-import { MeasurementAdminView } from './components/MeasurementAdminView';
 import { MeasurementView } from './components/MeasurementView';
 import { EmployeesView } from './components/EmployeesView';
 import { VehicleControlView } from './components/VehicleControlView';
@@ -24,131 +24,74 @@ import { DailyReportView } from './components/DailyReportView';
 import { RouteControlView } from './components/RouteControlView';
 import { supabase } from './api/supabaseClient';
 import { ThemeProvider, companyThemes } from './contexts/ThemeContext';
-import { LogOut, LayoutGrid, Users, Map as MapIcon, ClipboardList, ShieldCheck, Building2, Activity, Loader2, X, Settings, Calculator, Menu, ChevronLeft, ChevronRight, Car, Smartphone, FileSpreadsheet, ListTodo, Map, DollarSign } from 'lucide-react';
+import { LogOut, LayoutGrid, Users, Map as MapIcon, ClipboardList, Activity, Loader2, X, Settings, Calculator, Menu, ChevronLeft, ChevronRight, Car, Smartphone, FileSpreadsheet, ListTodo, Building2 } from 'lucide-react';
 import { getTasksByUserId, getTeams, getAllUsers, createTeam, updateTeam, deleteTeam } from './api/fieldManagerApi';
 import { useOfflineSync } from './hooks/useOfflineSync';
 
 type Tab = 'dashboard' | 'equipes' | 'mapa' | 'os' | 'monitoramento' | 'medicao' | 'funcionarios' | 'veiculos' | 'opec' | 'reports' | 'daily_report' | 'route_control';
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { isLoaded, isSignedIn, user } = useUser();
+  const { signOut } = useClerk();
+
   const [tasks, setTasks] = useState<Task[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
-  const [loading, setLoading] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
-  const currentUserIdRef = useRef<string | null>(null); // Track current user to avoid duplicate fetches
+
+  // Derive currentUser from Clerk user metadata
+  const currentUser: User | null = useMemo(() => {
+    if (!user) return null;
+    
+    const metadata = user.unsafeMetadata as {
+      name?: string;
+      role?: string;
+      company_id?: string;
+      company_name?: string;
+      avatar?: string;
+    };
+
+    return {
+      id: user.id,
+      name: metadata.name || user.firstName || 'Usuario',
+      email: user.primaryEmailAddress?.emailAddress || '',
+      role: (metadata.role as UserRole) || UserRole.TECNICO,
+      companyId: metadata.company_id || 'internal',
+      companyName: metadata.company_name || 'Eletromidia',
+      avatar: metadata.avatar || user.imageUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(metadata.name || 'User')}`,
+    };
+  }, [user]);
 
   // Background sync for offline evidence
   useOfflineSync(() => {
     // Optionally reload tasks if in a view that needs it
-    // loadTasks(); 
   });
 
+  // Portal validation - check if user is accessing correct portal
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session) {
-        const { data: { user } } = await supabase.auth.getUser();
-        const meta = user?.user_metadata || {};
-        const userCompanyId = meta.company_id || 'internal';
-        const isUserInternal = userCompanyId === 'internal';
-        const savedPortal = localStorage.getItem('active_portal');
+    if (currentUser) {
+      const savedPortal = localStorage.getItem('active_portal');
+      const isUserInternal = currentUser.companyId === 'internal';
 
-        if (savedPortal && (
-          (savedPortal === 'internal' && !isUserInternal) ||
-          (savedPortal === 'partner' && isUserInternal)
-        )) {
-          console.warn('Portal mismatch detected:', { savedPortal, isUserInternal });
-          await supabase.auth.signOut();
-          localStorage.removeItem('active_portal');
-          setLoading(false);
-          return;
-        }
-
-        currentUserIdRef.current = session.user.id;
-        fetchProfile(session.user.id);
-      } else {
-        setLoading(false);
+      if (savedPortal && (
+        (savedPortal === 'internal' && !isUserInternal) ||
+        (savedPortal === 'partner' && isUserInternal)
+      )) {
+        console.warn('Portal mismatch detected:', { savedPortal, isUserInternal });
+        // Sign out user if portal mismatch
+        handleLogout();
       }
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      // Ignore token refresh events to prevent unnecessary reloads
-      if (event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
-        console.log(`[Auth] ${event}, skipping reload`);
-        return;
-      }
-
-      if (event === 'SIGNED_OUT' || !session) {
-        currentUserIdRef.current = null;
-        setCurrentUser(null);
-        setLoading(false);
-        return;
-      }
-
-      // Only fetch profile if user is not already loaded (using ref to avoid stale closure)
-      if (currentUserIdRef.current !== session.user.id) {
-        console.log('[Auth] New user detected, fetching profile...');
-        currentUserIdRef.current = session.user.id;
-        fetchProfile(session.user.id);
-      } else {
-        console.log('[Auth] User already loaded, skipping fetch');
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  const fetchProfile = async (userId: string) => {
-    setLoading(true);
-    try {
-      const { data: profile, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (profile && !error) {
-        console.log('Profile loaded successfully:', profile);
-        setCurrentUser({
-          id: profile.id,
-          name: profile.name,
-          email: profile.email,
-          role: profile.role as UserRole,
-          companyId: profile.company_id,
-          companyName: profile.company_name,
-          avatar: profile.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile.name)}`,
-        });
-      } else {
-        console.error('Profile not found or error fetching:', { userId, error });
-        // If profile is missing (PGRST116), sign out to allow fresh login/signup
-        if (error && error.code === 'PGRST116') {
-          console.warn('Profile missing. Signing out...');
-          await supabase.auth.signOut();
-          setCurrentUser(null);
-        } else {
-          // General fetch error (like "Failed to fetch")
-          // Just set loading to false to show login screen or error state
-          setCurrentUser(null);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching profile:', err);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [currentUser]);
 
   useEffect(() => {
     if (currentUser) {
       loadAllData();
 
-      // Real-time subscriptions
+      // Real-time subscriptions for Supabase data (not auth)
       const tasksSubscription = supabase
         .channel('tasks-changes')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
@@ -274,9 +217,9 @@ const App: React.FC = () => {
     }
   };
 
-  const logout = async () => {
-    await supabase.auth.signOut();
-    setCurrentUser(null);
+  const handleLogout = async () => {
+    localStorage.removeItem('active_portal');
+    await signOut();
     setActiveTab('dashboard');
   };
 
@@ -310,7 +253,8 @@ const App: React.FC = () => {
     return users.filter(u => u.companyId === currentUser.companyId);
   }, [currentUser, isTechnician, users]);
 
-  if (loading) {
+  // Loading state - Clerk is still loading
+  if (!isLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-primary-50">
         <div className="flex flex-col items-center gap-4">
@@ -321,8 +265,9 @@ const App: React.FC = () => {
     );
   }
 
-  if (!currentUser) {
-    return <Login onLoginSuccess={(session) => fetchProfile(session.user.id)} />;
+  // Not signed in - show login
+  if (!isSignedIn || !currentUser) {
+    return <Login onLoginSuccess={() => {}} />;
   }
 
   const renderContent = () => {
@@ -424,16 +369,16 @@ const App: React.FC = () => {
             {!isTechnician && (
               <>
                 <SidebarLink icon={<MapIcon size={20} />} label="Mapa Operativo" active={activeTab === 'mapa'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('mapa')} />
-                <SidebarLink icon={<ClipboardList size={20} />} label="Gestão de OS" active={activeTab === 'os'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('os')} />
-                <SidebarLink icon={<ListTodo size={20} />} label="Relatório Diário" active={activeTab === 'daily_report'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('daily_report')} />
-                <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatórios" active={activeTab === 'reports'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('reports')} />
-                <SidebarLink icon={<Calculator size={20} />} label="Medição" active={activeTab === 'medicao'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('medicao')} />
+                <SidebarLink icon={<ClipboardList size={20} />} label="Gestao de OS" active={activeTab === 'os'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('os')} />
+                <SidebarLink icon={<ListTodo size={20} />} label="Relatorio Diario" active={activeTab === 'daily_report'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('daily_report')} />
+                <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatorios" active={activeTab === 'reports'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('reports')} />
+                <SidebarLink icon={<Calculator size={20} />} label="Medicao" active={activeTab === 'medicao'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('medicao')} />
 
-                <SidebarLink icon={<Users size={20} />} label="Funcionários" active={activeTab === 'funcionarios'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('funcionarios')} />
+                <SidebarLink icon={<Users size={20} />} label="Funcionarios" active={activeTab === 'funcionarios'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('funcionarios')} />
                 <SidebarLink icon={<Users size={20} />} label="Equipes" active={activeTab === 'equipes'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('equipes')} />
                 {!isPartner && (
                   <>
-                    <SidebarLink icon={<Smartphone size={20} />} label="Gestão de OPEC" active={activeTab === 'opec'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('opec')} />
+                    <SidebarLink icon={<Smartphone size={20} />} label="Gestao de OPEC" active={activeTab === 'opec'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('opec')} />
                     <SidebarLink icon={<Car size={20} />} label="Controle de Frota" active={activeTab === 'veiculos'} collapsed={isSidebarCollapsed} onClick={() => setActiveTab('veiculos')} />
                   </>
                 )}
@@ -463,7 +408,7 @@ const App: React.FC = () => {
                 </div>
               )}
             </button>
-            <button onClick={logout} className={`flex items-center gap-3 w-full text-slate-400 hover:text-primary hover:bg-primary-50 rounded-2xl transition-all font-black text-xs uppercase tracking-widest ${isSidebarCollapsed ? 'justify-center p-3' : 'p-4'}`}>
+            <button onClick={handleLogout} className={`flex items-center gap-3 w-full text-slate-400 hover:text-primary hover:bg-primary-50 rounded-2xl transition-all font-black text-xs uppercase tracking-widest ${isSidebarCollapsed ? 'justify-center p-3' : 'p-4'}`}>
               <LogOut size={isSidebarCollapsed ? 20 : 18} />
               {!isSidebarCollapsed && <span>Sair do Sistema</span>}
             </button>
@@ -481,16 +426,16 @@ const App: React.FC = () => {
               </button>
               <img src="https://gvlhjjonhwhifxomwpgu.supabase.co/storage/v1/object/public/assets/LOGOELETRO.png" alt="Eletromidia" className="h-8 w-auto md:hidden" />
               <div className="flex flex-col">
-                <h1 className="text-xl md:text-3xl font-black text-slate-900 tracking-tighter uppercase leading-none">OPERAÇÃO CONCESSÃO SP - MATRIZ</h1>
+                <h1 className="text-xl md:text-3xl font-black text-slate-900 tracking-tighter uppercase leading-none">OPERACAO CONCESSAO SP - MATRIZ</h1>
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{activeTab} • {currentUser.companyName}</p>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{activeTab} - {currentUser.companyName}</p>
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-4">
               <NotificationCenter currentUser={currentUser} />
-              <button className="md:hidden p-3 text-primary bg-primary-50 rounded-2xl" onClick={logout}>
+              <button className="md:hidden p-3 text-primary bg-primary-50 rounded-2xl" onClick={handleLogout}>
                 <LogOut size={24} />
               </button>
             </div>
@@ -539,16 +484,16 @@ const App: React.FC = () => {
             {!isTechnician && (
               <>
                 <SidebarLink icon={<MapIcon size={20} />} label="Mapa Operativo" active={activeTab === 'mapa'} onClick={() => { setActiveTab('mapa'); setIsMobileMenuOpen(false); }} />
-                <SidebarLink icon={<ClipboardList size={20} />} label="Gestão de OS" active={activeTab === 'os'} onClick={() => { setActiveTab('os'); setIsMobileMenuOpen(false); }} />
-                <SidebarLink icon={<ListTodo size={20} />} label="Relatório Diário" active={activeTab === 'daily_report'} onClick={() => { setActiveTab('daily_report'); setIsMobileMenuOpen(false); }} />
-                <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatórios" active={activeTab === 'reports'} onClick={() => { setActiveTab('reports'); setIsMobileMenuOpen(false); }} />
-                <SidebarLink icon={<Calculator size={20} />} label="Medição" active={activeTab === 'medicao'} onClick={() => { setActiveTab('medicao'); setIsMobileMenuOpen(false); }} />
+                <SidebarLink icon={<ClipboardList size={20} />} label="Gestao de OS" active={activeTab === 'os'} onClick={() => { setActiveTab('os'); setIsMobileMenuOpen(false); }} />
+                <SidebarLink icon={<ListTodo size={20} />} label="Relatorio Diario" active={activeTab === 'daily_report'} onClick={() => { setActiveTab('daily_report'); setIsMobileMenuOpen(false); }} />
+                <SidebarLink icon={<FileSpreadsheet size={20} />} label="Relatorios" active={activeTab === 'reports'} onClick={() => { setActiveTab('reports'); setIsMobileMenuOpen(false); }} />
+                <SidebarLink icon={<Calculator size={20} />} label="Medicao" active={activeTab === 'medicao'} onClick={() => { setActiveTab('medicao'); setIsMobileMenuOpen(false); }} />
 
-                <SidebarLink icon={<Users size={20} />} label="Funcionários" active={activeTab === 'funcionarios'} onClick={() => { setActiveTab('funcionarios'); setIsMobileMenuOpen(false); }} />
+                <SidebarLink icon={<Users size={20} />} label="Funcionarios" active={activeTab === 'funcionarios'} onClick={() => { setActiveTab('funcionarios'); setIsMobileMenuOpen(false); }} />
                 <SidebarLink icon={<Users size={20} />} label="Equipes" active={activeTab === 'equipes'} onClick={() => { setActiveTab('equipes'); setIsMobileMenuOpen(false); }} />
                 {!isPartner && (
                   <>
-                    <SidebarLink icon={<Smartphone size={20} />} label="Gestão de OPEC" active={activeTab === 'opec'} onClick={() => { setActiveTab('opec'); setIsMobileMenuOpen(false); }} />
+                    <SidebarLink icon={<Smartphone size={20} />} label="Gestao de OPEC" active={activeTab === 'opec'} onClick={() => { setActiveTab('opec'); setIsMobileMenuOpen(false); }} />
                     <SidebarLink icon={<Car size={20} />} label="Controle de Frota" active={activeTab === 'veiculos'} onClick={() => { setActiveTab('veiculos'); setIsMobileMenuOpen(false); }} />
                   </>
                 )}
@@ -570,7 +515,7 @@ const App: React.FC = () => {
                 {currentUser.companyName}
               </div>
             </div>
-            <button onClick={logout} className="flex items-center gap-3 w-full p-3 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-xl transition-all font-bold text-sm">
+            <button onClick={handleLogout} className="flex items-center gap-3 w-full p-3 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-xl transition-all font-bold text-sm">
               <LogOut size={20} />
               Sair do Sistema
             </button>
@@ -585,8 +530,9 @@ const App: React.FC = () => {
           <ProfileSettings
             user={currentUser}
             onClose={() => setIsProfileModalOpen(false)}
-            onUpdate={(updatedUser) => {
-              setCurrentUser(updatedUser);
+            onUpdate={() => {
+              // Clerk will automatically update the user object
+              // No need to manually set state
             }}
           />
         )}

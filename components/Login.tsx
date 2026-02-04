@@ -1,16 +1,19 @@
 import React, { useState } from 'react';
-import { supabase } from '../api/supabaseClient';
+import { useSignIn, useSignUp } from '@clerk/clerk-react';
 import { UserRole } from '../types';
 import { ShieldCheck, Building2, ArrowLeft, Mail, Lock, Loader2, User as UserIcon, Briefcase, RefreshCw, Factory } from 'lucide-react';
 
 interface LoginProps {
-    onLoginSuccess: (session: any) => void;
+    onLoginSuccess: () => void;
 }
 
 type LoginPortal = 'internal' | 'partner' | null;
 type AuthMode = 'login' | 'register' | 'verify';
 
 const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
+    const { signIn, setActive: setSignInActive, isLoaded: isSignInLoaded } = useSignIn();
+    const { signUp, setActive: setSignUpActive, isLoaded: isSignUpLoaded } = useSignUp();
+
     const [portal, setPortal] = useState<LoginPortal>(null);
     const [mode, setMode] = useState<AuthMode>('login');
     const [email, setEmail] = useState('');
@@ -40,13 +43,13 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     const isInternal = portal === 'internal';
 
     const internalRoles = [
-        { value: UserRole.TECNICO, label: 'Técnico Eletromidia' },
-        { value: UserRole.LIDER, label: 'Líder Regional' },
+        { value: UserRole.TECNICO, label: 'Tecnico Eletromidia' },
+        { value: UserRole.LIDER, label: 'Lider Regional' },
         { value: UserRole.CHEFE, label: 'Chief of Operations' },
     ];
 
     const partnerRoles = [
-        { value: UserRole.PARCEIRO_TECNICO, label: 'Técnico Terceiro' },
+        { value: UserRole.PARCEIRO_TECNICO, label: 'Tecnico Terceiro' },
         { value: UserRole.PARCEIRO_LIDER, label: 'Supervisor Parceiro' },
         { value: UserRole.PARCEIRO_CHEFE, label: 'Gestor Parceiro' },
     ];
@@ -62,133 +65,119 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!isSignInLoaded || !isSignUpLoaded) return;
+        
         setLoading(true);
         setError(null);
 
         try {
             const normalizedEmail = email.trim().toLowerCase();
+            
             if (mode === 'login') {
-                const { data, error: authError } = await supabase.auth.signInWithPassword({
-                    email: normalizedEmail,
+                const result = await signIn.create({
+                    identifier: normalizedEmail,
                     password,
                 });
-                if (authError) throw authError;
 
-                console.log('Login successful, checking portal access...', data.user);
-
-                // SEGURANÇA: Verificar se o usuário pertence ao portal correto
-                if (data.session && data.user) {
-                    const userMeta = data.user.user_metadata || {};
-                    const userCompanyId = userMeta.company_id || 'internal';
-                    const isUserInternal = userCompanyId === 'internal';
-
-                    console.log('Auth Metadata:', { userCompanyId, isUserInternal, currentPortal: portal });
-
-                    // Se o usuário é interno mas está tentando logar pelo portal parceiro
-                    if (isUserInternal && !isInternal) {
-                        await supabase.auth.signOut();
-                        localStorage.removeItem('active_portal');
-                        setLoading(false);
-                        setError('Esta conta pertence ao Portal Interno. Use o Portal Interno para fazer login.');
-                        return;
-                    }
-
-                    // Se o usuário é parceiro mas está tentando logar pelo portal interno
-                    if (!isUserInternal && isInternal) {
-                        await supabase.auth.signOut();
-                        localStorage.removeItem('active_portal');
-                        setLoading(false);
-                        setError('Esta conta pertence ao Portal de Parceiros. Use o Portal Parceiros para fazer login.');
-                        return;
-                    }
-
-                    // Login válido - salvar portal ativo para futuras restaurações de sessão
+                if (result.status === 'complete') {
+                    // Verify portal access by checking user metadata
+                    // This will be validated in App.tsx after session is set
                     localStorage.setItem('active_portal', isInternal ? 'internal' : 'partner');
-                    onLoginSuccess(data.session);
+                    await setSignInActive({ session: result.createdSessionId });
+                    onLoginSuccess();
+                } else {
+                    // Handle other statuses (e.g., needs_first_factor, needs_second_factor)
+                    console.log('Sign in status:', result.status);
+                    setError('Login requer verificacao adicional');
                 }
             } else if (mode === 'register') {
-                if (!role) throw new Error('Selecione sua função');
+                if (!role) throw new Error('Selecione sua funcao');
                 if (!isInternal && !partnerCompany) throw new Error('Selecione sua empresa');
 
-                // Garante sessão limpa antes de registrar novo usuário
-                await supabase.auth.signOut();
+                const companyId = isInternal ? 'internal' : partnerCompany;
+                const companyName = isInternal 
+                    ? 'Eletromidia' 
+                    : partnerCompanies.find(c => c.value === partnerCompany)?.label || 'Empresa Parceira';
 
-                const { data, error: authError } = await supabase.auth.signUp({
-                    email: normalizedEmail,
+                const result = await signUp.create({
+                    emailAddress: normalizedEmail,
                     password,
-                    options: {
-                        data: {
-                            name,
-                            role,
-                            company_id: isInternal ? 'internal' : partnerCompany,
-                            company_name: isInternal ? 'Eletromidia' : partnerCompanies.find(c => c.value === partnerCompany)?.label || 'Empresa Parceira',
-                            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random`,
-                        }
+                    unsafeMetadata: {
+                        name,
+                        role,
+                        company_id: companyId,
+                        company_name: companyName,
+                        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random`,
                     }
                 });
-                console.log('SignUp Success:', data);
-                if (data.user || data.session) {
-                    // Save email and portal for recovery
+
+                if (result.status === 'missing_requirements') {
+                    // Email verification required
+                    await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
                     localStorage.setItem('pending_verification_email', normalizedEmail);
                     localStorage.setItem('active_portal', isInternal ? 'internal' : 'partner');
                     setMode('verify');
-                    setError(null);
+                } else if (result.status === 'complete') {
+                    localStorage.setItem('active_portal', isInternal ? 'internal' : 'partner');
+                    await setSignUpActive({ session: result.createdSessionId });
+                    onLoginSuccess();
                 }
             } else if (mode === 'verify') {
-                console.log('Verifying OTP:', otp, 'for email:', normalizedEmail);
-                const { data, error: verifyError } = await supabase.auth.verifyOtp({
-                    email: normalizedEmail,
-                    token: otp,
-                    type: 'signup'
+                const result = await signUp.attemptEmailAddressVerification({
+                    code: otp,
                 });
-                console.log('Verify response:', data, verifyError);
-                if (verifyError) {
-                    console.error('OTP Verification Error:', verifyError);
-                    throw verifyError;
-                }
 
-                if (data.session) {
-                    // Re-confirm portal on successful verification and CLEAR pending email
+                if (result.status === 'complete') {
+                    localStorage.removeItem('pending_verification_email');
                     localStorage.setItem('active_portal', isInternal ? 'internal' : 'partner');
-                    localStorage.removeItem('pending_verification_email');
                     setVerifySuccess(true);
-                    onLoginSuccess(data.session);
-                } else if (data.user) {
-                    // If no session but user exists, it might be verified but needs login
-                    // or it's a specific Supabase config. Most cases data.session is present.
-                    console.log('User verified but no session yet');
-                    localStorage.removeItem('pending_verification_email');
-                    setVerifySuccess(true);
-                    setMode('login');
-                    setError('Conta verificada com sucesso! Por favor, faça o login.');
+                    await setSignUpActive({ session: result.createdSessionId });
+                    onLoginSuccess();
+                } else {
+                    setError('Codigo invalido ou expirado');
                 }
             }
         } catch (err: any) {
-            setError(err.message || 'Erro ao processar solicitação');
+            console.error('Auth error:', err);
+            // Handle Clerk error messages
+            const clerkError = err.errors?.[0];
+            if (clerkError) {
+                const message = clerkError.longMessage || clerkError.message;
+                // Translate common Clerk errors to Portuguese
+                if (message.includes('Invalid password')) {
+                    setError('Senha invalida');
+                } else if (message.includes('Identifier')) {
+                    setError('Email ou senha incorretos');
+                } else if (message.includes('already exists')) {
+                    setError('Este email ja esta cadastrado');
+                } else if (message.includes('verification code')) {
+                    setError('Codigo de verificacao invalido');
+                } else {
+                    setError(message);
+                }
+            } else {
+                setError(err.message || 'Erro ao processar solicitacao');
+            }
         } finally {
             setLoading(false);
         }
     };
 
     const handleResendCode = async () => {
+        if (!isSignUpLoaded) return;
+        
         setResending(true);
         setError(null);
         setResendSuccess(false);
 
-        const normalizedEmail = email.trim().toLowerCase();
-
         try {
-            const { error: resendError } = await supabase.auth.resend({
-                type: 'signup',
-                email: normalizedEmail,
-            });
-
-            if (resendError) throw resendError;
+            await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
             setResendSuccess(true);
             setOtp('');
             setTimeout(() => setResendSuccess(false), 5000);
         } catch (err: any) {
-            setError(err.message || 'Erro ao reenviar código');
+            const clerkError = err.errors?.[0];
+            setError(clerkError?.message || 'Erro ao reenviar codigo');
         } finally {
             setResending(false);
         }
@@ -205,7 +194,6 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     };
 
     if (!portal) {
-        // ... portal selection UI (unchanged)
         return (
             <div className="min-h-screen relative flex flex-col items-center justify-center p-6 font-sans overflow-hidden bg-white">
                 {/* Modern Animated Background */}
@@ -220,14 +208,14 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     <div className="text-center mb-20 space-y-6">
                         <div className="inline-flex items-center gap-3 mb-4">
                             <span className="h-[2px] w-12 bg-primary rounded-full"></span>
-                            <span className="text-xs font-black uppercase tracking-[0.4em] text-primary">Concessão SP</span>
+                            <span className="text-xs font-black uppercase tracking-[0.4em] text-primary">Concessao SP</span>
                             <span className="h-[2px] w-12 bg-primary rounded-full"></span>
                         </div>
                         <h1 className="text-6xl md:text-8xl font-black text-secondary tracking-tighter leading-none">
                             <span className="text-primary">Eletro</span>midia
                         </h1>
                         <p className="text-slate-500 text-lg md:text-xl font-bold max-w-2xl mx-auto uppercase tracking-wide">
-                            Instalações de abrigos - Curva 2000
+                            Instalacoes de abrigos - Curva 2000
                         </p>
                     </div>
 
@@ -289,7 +277,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
                     {/* Footer Branding */}
                     <div className="mt-24 text-center">
-                        <p className="text-[11px] font-black uppercase tracking-[0.5em] text-slate-400">© 2026 Eletromidia SA • Curva 2000</p>
+                        <p className="text-[11px] font-black uppercase tracking-[0.5em] text-slate-400">2026 Eletromidia SA - Curva 2000</p>
                     </div>
                 </div>
             </div>
@@ -333,7 +321,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                         {mode === 'login' ? 'Login' : (mode === 'register' ? 'Cadastro' : 'Verificar')}
                     </h1>
                     <p className={`font-black uppercase text-[11px] tracking-[0.3em] ${isInternal ? 'text-primary' : 'text-primary'}`}>
-                        {mode === 'verify' ? 'Insira o código enviado' : (isInternal ? 'Eletromidia Oficial' : 'Equipe Terceirizada')}
+                        {mode === 'verify' ? 'Insira o codigo enviado' : (isInternal ? 'Eletromidia Oficial' : 'Equipe Terceirizada')}
                     </p>
                 </div>
 
@@ -341,35 +329,35 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     {mode === 'verify' ? (
                         <div className="space-y-6 animate-fadeIn">
                             <div className="space-y-3">
-                                <label className={`block text-[10px] font-black uppercase tracking-[0.3em] ml-2 ${isInternal ? 'text-slate-400' : 'text-slate-500'}`}>Código de 8 dígitos</label>
+                                <label className={`block text-[10px] font-black uppercase tracking-[0.3em] ml-2 ${isInternal ? 'text-slate-400' : 'text-slate-500'}`}>Codigo de 6 digitos</label>
                                 <div className="relative group">
                                     <input
                                         type="text"
                                         required
-                                        maxLength={8}
+                                        maxLength={6}
                                         value={otp}
                                         onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
                                         className={`w-full px-4 py-8 rounded-[24px] border border-dashed outline-none transition-all font-black text-2xl md:text-4xl text-center tracking-[0.1em] md:tracking-[0.2em] ${isInternal
                                             ? 'bg-primary-50 border-primary-200 text-primary focus:bg-white focus:border-primary ring-8 ring-transparent focus:ring-primary-50'
                                             : 'bg-slate-800/40 border-primary/20 text-white focus:bg-slate-800 focus:border-primary ring-8 ring-transparent focus:ring-primary/5'
                                             }`}
-                                        placeholder="00000000"
+                                        placeholder="000000"
                                     />
                                 </div>
                             </div>
                             <p className="text-[10px] font-bold text-center text-slate-400 uppercase tracking-widest leading-relaxed">
-                                Enviamos um código para<br /><span className="text-primary font-black">{email}</span>
+                                Enviamos um codigo para<br /><span className="text-primary font-black">{email}</span>
                             </p>
 
                             {resendSuccess && (
                                 <div className="p-4 rounded-[16px] bg-emerald-50 border border-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-[0.2em] text-center">
-                                    ✓ Novo código enviado com sucesso!
+                                    Novo codigo enviado com sucesso!
                                 </div>
                             )}
 
                             {verifySuccess && (
                                 <div className="p-4 rounded-[16px] bg-emerald-50 border border-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-[0.2em] text-center animate-bounce">
-                                    ✓ Verificado! Entrando...
+                                    Verificado! Entrando...
                                 </div>
                             )}
 
@@ -387,7 +375,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                                 ) : (
                                     <RefreshCw size={16} />
                                 )}
-                                {resending ? 'Reenviando...' : 'Reenviar código'}
+                                {resending ? 'Reenviando...' : 'Reenviar codigo'}
                             </button>
                         </div>
                     ) : (
@@ -432,7 +420,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
                             {mode === 'register' && (
                                 <div className="space-y-3">
-                                    <label className={`block text-[10px] font-black uppercase tracking-[0.3em] ml-2 ${isInternal ? 'text-slate-400' : 'text-slate-500'}`}>Sua Função</label>
+                                    <label className={`block text-[10px] font-black uppercase tracking-[0.3em] ml-2 ${isInternal ? 'text-slate-400' : 'text-slate-500'}`}>Sua Funcao</label>
                                     <div className="relative group">
                                         <Briefcase className={`absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors`} size={20} />
                                         <select
@@ -480,7 +468,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                             )}
 
                             <div className="space-y-3">
-                                <label className={`block text-[10px) font-black uppercase tracking-[0.3em] ml-2 ${isInternal ? 'text-slate-400' : 'text-slate-500'}`}>Senha de acesso</label>
+                                <label className={`block text-[10px] font-black uppercase tracking-[0.3em] ml-2 ${isInternal ? 'text-slate-400' : 'text-slate-500'}`}>Senha de acesso</label>
                                 <div className="relative group">
                                     <Lock className={`absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors`} size={20} />
                                     <input
@@ -492,7 +480,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                                             ? 'bg-slate-100/50 border-transparent focus:bg-white focus:border-primary text-secondary ring-8 ring-transparent focus:ring-primary-50'
                                             : 'bg-slate-800/40 border-transparent focus:bg-slate-800 focus:border-primary text-white ring-8 ring-transparent focus:ring-primary/5'
                                             }`}
-                                        placeholder="••••••••"
+                                        placeholder="********"
                                     />
                                 </div>
                             </div>
@@ -500,11 +488,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     )}
 
                     {error && (
-                        <div className={`p-5 rounded-[24px] text-[10px] font-black uppercase tracking-[0.2em] border flex items-center gap-4 animate-headShake ${error.includes('enviado')
+                        <div className={`p-5 rounded-[24px] text-[10px] font-black uppercase tracking-[0.2em] border flex items-center gap-4 animate-headShake ${error.includes('enviado') || error.includes('sucesso')
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
                             : 'bg-rose-50 text-rose-700 border-rose-100'
                             }`}>
-                            <div className={`w-2.5 h-2.5 rounded-full ${error.includes('enviado') ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
+                            <div className={`w-2.5 h-2.5 rounded-full ${error.includes('enviado') || error.includes('sucesso') ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
                             {error}
                         </div>
                     )}
@@ -517,7 +505,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                         {loading ? (
                             <Loader2 className="animate-spin" size={24} />
                         ) : (
-                            mode === 'login' ? 'Entrar no Sistema' : (mode === 'register' ? 'Concluir Cadastro' : 'Confirmar Código')
+                            mode === 'login' ? 'Entrar no Sistema' : (mode === 'register' ? 'Concluir Cadastro' : 'Confirmar Codigo')
                         )}
                     </button>
                 </form>
@@ -532,7 +520,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                             className={`text-[10px] font-black uppercase tracking-[0.4em] transition-colors ${isInternal ? 'text-slate-400 hover:text-primary' : 'text-slate-500 hover:text-primary'
                                 }`}
                         >
-                            {mode === 'login' ? 'Novo por aqui? Solicite acesso' : 'Já possui conta? Faça o login'}
+                            {mode === 'login' ? 'Novo por aqui? Solicite acesso' : 'Ja possui conta? Faca o login'}
                         </button>
                     </div>
                 )}
