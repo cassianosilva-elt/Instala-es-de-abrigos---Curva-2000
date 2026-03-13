@@ -1,10 +1,10 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { User, DailyReport, DailyActivity, Team, UserRole, Absence, Vehicle, OpecDevice } from '../types';
 import { ACTIVITY_TYPES } from '../api/activityTypes';
 import { getTeams, getAllUsers, getDailyReportByTeamAndDate, upsertDailyReport, createAbsence, getAbsences, deleteAbsence, getVehicles, getOpecDevices, getDailyReports, getDailyReportsForMonth, subscribeToDailyActivities, deleteDailyActivity, updateDailyActivityQuantity } from '../api/fieldManagerApi';
 import { supabase } from '../api/supabaseClient';
-import { ClipboardList, Users, Calendar, Plus, Save, History, X, AlertCircle, Download, Trash2, Car, Smartphone, Search, CheckCircle } from 'lucide-react';
+import { ClipboardList, Users, Calendar, Plus, Save, History, X, AlertCircle, Download, Trash2, Car, Smartphone, Search, CheckCircle, Edit2 } from 'lucide-react';
 import { createEletromidiaWorkbook, styleHeaderRow, styleDataRows, autoFitColumns, saveWorkbook } from '../utils/excelExport';
 
 interface Props {
@@ -35,6 +35,8 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
     const [isExportingMonth, setIsExportingMonth] = useState(false);
+    const [isEditingReport, setIsEditingReport] = useState(false);
+    const isEditingRef = useRef(false);
 
     const isToday = useMemo(() => {
         const today = new Date().toISOString().split('T')[0];
@@ -51,7 +53,7 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     }, []);
 
     useEffect(() => {
-        if (date) {
+        if (date && !isEditingRef.current) {
             loadReport();
         }
     }, [selectedTeam, selectedTechnicianIds, date]);
@@ -60,8 +62,8 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
     useEffect(() => {
         if (isLeaderOrChief && date) {
             const channel = subscribeToDailyActivities(currentUser.companyId, date, (payload) => {
-                // Quando uma nova atividade é inserida, recarrega os relatórios
-                if (payload.eventType === 'INSERT') {
+                // Quando uma nova atividade é inserida, recarrega os relatórios (se não estiver editando)
+                if (payload.eventType === 'INSERT' && !isEditingRef.current) {
                     loadReport();
                 }
             });
@@ -187,12 +189,29 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
         ]);
     };
 
-    const handleDeleteActivity = (index: number) => {
+    const handleDeleteActivity = async (index: number) => {
         if (!isToday && !isChief) {
             alert('Apenas chefes podem editar relatórios de datas passadas.');
             return;
         }
-        setSelectedActivities(prev => prev.filter((_, i) => i !== index));
+
+        const activityToDelete = selectedActivities[index];
+        
+        if (window.confirm(`Tem certeza que deseja excluir a atividade "${activityToDelete.activityType}"?`)) {
+            // Se a atividade já tem ID, ela está no banco de dados e precisa ser excluída lá também
+            if (activityToDelete.id) {
+                try {
+                    await deleteDailyActivity(activityToDelete.id);
+                } catch (error) {
+                    console.error('Erro ao excluir atividade:', error);
+                    alert('Erro ao excluir a atividade. Tente novamente.');
+                    return; // Não remove do estado se falhou no banco
+                }
+            }
+            
+            // Remove do estado local
+            setSelectedActivities(prev => prev.filter((_, i) => i !== index));
+        }
     };
 
     // Quantity change now needs index because we can have multiple of same type
@@ -211,6 +230,8 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
         setSelectedTeam('');
         setSelectedTechnicianIds([]);
         setSelectedActivities([]);
+        setIsEditingReport(false);
+        isEditingRef.current = false;
         setReport({
             date,
             teamId: undefined,
@@ -218,13 +239,33 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
             userId: currentUser.id,
             companyId: currentUser.companyId,
             activities: [],
-            // Mantém veículo e OPEC nulos para forçar nova seleção ou mudar se necessário
             carPlate: undefined,
             opecId: undefined,
             route: '',
             notes: ''
         });
         setAbsences([]);
+    };
+
+    const handleEditReport = (reportToEdit: DailyReport) => {
+        // Seta ref ANTES de mudar state para o useEffect não disparar loadReport
+        isEditingRef.current = true;
+
+        // Carrega o relatório existente no formulário para edição
+        setReport(reportToEdit);
+        setSelectedActivities(reportToEdit.activities);
+        setIsEditingReport(true);
+
+        if (reportToEdit.teamId) {
+            setSelectedTeam(reportToEdit.teamId);
+            setSelectedTechnicianIds([]);
+        } else if (reportToEdit.technicianIds && reportToEdit.technicianIds.length > 0) {
+            setSelectedTeam('');
+            setSelectedTechnicianIds(reportToEdit.technicianIds);
+        }
+
+        // Scroll para o topo para o usuário ver o formulário
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const handleSave = async () => {
@@ -240,21 +281,14 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
 
         setIsSaving(true);
         try {
-            // Calculate aggregate technician IDs from all activities for the main report record
-            const allTechIds = new Set<string>();
-            selectedActivities.forEach(a => {
-                a.technicianIds?.forEach(tid => allTechIds.add(tid));
-            });
-            // Include manually selected techs to avoid state loss
-            selectedTechnicianIds.forEach(tid => allTechIds.add(tid));
-
-            const finalTechIds = selectedTeam ? undefined : Array.from(allTechIds);
-
+            // No longer merging all activity technicians into the main report.
+            // Activities retain their specific technicianIds, and the main report 
+            // retains whatever was explicitly selected in the top form (team or specific techs).
             const reportToSave: Omit<DailyReport, 'id'> = {
                 date,
                 userId: currentUser.id,
                 teamId: selectedTeam || undefined,
-                technicianIds: finalTechIds,
+                technicianIds: selectedTeam ? undefined : (selectedTechnicianIds.length > 0 ? selectedTechnicianIds : undefined),
                 companyId: currentUser.companyId,
                 activities: selectedActivities,
                 carPlate: report?.carPlate,
@@ -787,10 +821,25 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                 </div>
             )}
 
-            {report?.id && (
+            {report?.id && !isEditingReport && (
                 <div className="bg-green-50 border border-green-200 p-4 rounded-2xl flex items-center gap-3 text-green-700 font-bold text-sm">
                     <ClipboardList size={20} />
                     Relatório salvo encontrado para {date}. Os dados foram carregados.
+                </div>
+            )}
+
+            {isEditingReport && (
+                <div className="bg-blue-50 border border-blue-300 p-4 rounded-2xl flex items-center justify-between text-blue-700 font-bold text-sm">
+                    <div className="flex items-center gap-3">
+                        <Edit2 size={20} />
+                        Editando relatório existente. Altere os dados e clique em "Salvar Relatório".
+                    </div>
+                    <button
+                        onClick={resetForm}
+                        className="px-3 py-1 bg-blue-100 hover:bg-blue-200 rounded-xl text-xs font-black uppercase transition-colors"
+                    >
+                        Cancelar Edição
+                    </button>
                 </div>
             )}
 
@@ -893,29 +942,58 @@ export const DailyReportView: React.FC<Props> = ({ currentUser }) => {
                                             const team = teams.find(t => t.id === otherReport.teamId);
                                             const sourceName = team ? team.name : (reporter?.name || 'Desconhecido');
 
-                                            return otherReport.activities.map((activity, aIdx) => {
-                                                const techNames = activity.technicianIds?.map(tid => users.find(u => u.id === tid)?.name || 'Desconhecido').join(', ') || 'Equipe Completa';
-                                                return (
-                                                    <div key={`view-${otherReport.id}-${aIdx}`} className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-2xl border border-slate-100 opacity-60">
-                                                        <div className="flex-1">
-                                                            <div className="flex items-center justify-between mb-1">
-                                                                <div className="flex items-center gap-2">
-                                                                    <span className="text-[10px] font-black px-2 py-0.5 bg-slate-200 text-slate-500 rounded-full uppercase">{sourceName}</span>
-                                                                    <span className="text-xs font-black uppercase text-slate-400">{activity.activityType}</span>
-                                                                </div>
-                                                            </div>
-                                                            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mb-1 line-clamp-1">
-                                                                {techNames}
-                                                            </p>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-[9px] font-bold text-slate-300 uppercase">Qtd: {activity.quantity}</span>
-                                                                <span className="text-[9px] font-bold text-slate-300 uppercase px-2">|</span>
-                                                                <span className="text-[9px] font-bold text-slate-300 uppercase">Rota: {otherReport.route || 'N/A'}</span>
-                                                            </div>
+                                            return (
+                                                <div key={`report-${otherReport.id}`} className="bg-slate-50/50 rounded-2xl border border-slate-100 overflow-hidden">
+                                                    {/* Report Header with Edit Button */}
+                                                    <div className="flex items-center justify-between p-3 bg-slate-100/50 border-b border-slate-100">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-[10px] font-black px-2 py-0.5 bg-slate-200 text-slate-500 rounded-full uppercase">{sourceName}</span>
+                                                            {otherReport.route && (
+                                                                <span className="text-[9px] font-bold text-slate-400 uppercase">Rota: {otherReport.route}</span>
+                                                            )}
                                                         </div>
+                                                        {(isToday || isChief) && (
+                                                            <button
+                                                                onClick={() => handleEditReport(otherReport)}
+                                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-600 rounded-xl text-[10px] font-black uppercase tracking-wide transition-all"
+                                                            >
+                                                                <Edit2 size={12} />
+                                                                Editar
+                                                            </button>
+                                                        )}
                                                     </div>
-                                                );
-                                            });
+
+                                                    {/* Activities */}
+                                                    <div className="p-3 space-y-2">
+                                                        {otherReport.activities.map((activity, aIdx) => {
+                                                            const techNames = activity.technicianIds?.map(tid => users.find(u => u.id === tid)?.name || 'Desconhecido').join(', ') || 'Equipe Completa';
+                                                            return (
+                                                                <div key={`view-${otherReport.id}-${aIdx}`} className="flex items-center gap-4 p-3 bg-white/60 rounded-xl">
+                                                                    <div className="flex-1">
+                                                                        <div className="flex items-center justify-between mb-1">
+                                                                            <span className="text-xs font-black uppercase text-slate-500">{activity.activityType}</span>
+                                                                        </div>
+                                                                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mb-1 line-clamp-1">
+                                                                            {techNames}
+                                                                        </p>
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span className="text-[9px] font-bold text-slate-400 uppercase">Qtd: {activity.quantity}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+
+                                                        {/* Observação do relatório */}
+                                                        {otherReport.notes && (
+                                                            <div className="px-3 py-2 bg-amber-50/50 rounded-xl border border-amber-100">
+                                                                <span className="text-[9px] font-black text-amber-600 uppercase tracking-wider">Observação: </span>
+                                                                <span className="text-[10px] font-bold text-amber-700">{otherReport.notes}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
                                         })
                                     }
                                 </div>

@@ -1356,11 +1356,23 @@ export const upsertDailyReport = async (report: Omit<DailyReport, 'id'>, id?: st
         }
     }
 
-    // REGRA 1: Append-only - NÃO deleta atividades existentes, apenas insere novas
     if (reportId) {
-        // Filtra apenas atividades NOVAS (sem id) para inserir
+        // Separa atividades existentes (com id) das novas (sem id)
+        const existingActivities = report.activities.filter(a => a.id);
         const newActivities = report.activities.filter(a => !a.id);
 
+        // Atualiza atividades existentes (quantidade, técnicos, etc.)
+        for (const a of existingActivities) {
+            const { error: updateError } = await supabase.from('daily_activities').update({
+                quantity: a.quantity,
+                technician_ids: a.technicianIds,
+                car_plate: a.carPlate || null,
+                opec_id: a.opecId || null
+            }).eq('id', a.id);
+            if (updateError) throw updateError;
+        }
+
+        // Insere novas atividades
         if (newActivities.length > 0) {
             const activitiesData = newActivities.map(a => ({
                 report_id: reportId,
